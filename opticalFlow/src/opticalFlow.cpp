@@ -284,17 +284,13 @@ std::vector<cv::Point2f> const & old_corners, std::vector<cv::Point2f> const & n
 	
 	#ifdef D_PQ_ORDER
 		ROS_INFO("Start PQ READ");
-	#endif
-	FlowNode pqElem;
-	while(!flowPQ.empty())
-	{
-		pqElem = flowPQ.top();
-		flowPQ.pop();
-		#ifdef D_PQ_ORDER
+		FlowNode pqElem;
+		while(!flowPQ.empty())
+		{
+			pqElem = flowPQ.top();
+			flowPQ.pop();
 			ROS_INFO("mag: %f, ang: %f, i:%i, j:%i", pqElem.magnitude, pqElem.angle, pqElem.i, pqElem.j);
-		#endif
-	}
-	#ifdef D_PQ_ORDER
+		}
 		ROS_INFO("End PQ READ");
 	#endif
 }
