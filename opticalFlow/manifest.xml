@@ -1,0 +1,23 @@
+<package>
+  <description brief="opticalFlow">
+
+     opticalFlow
+
+  </description>
+  <author>ardrone</author>
+  <license>BSD</license>
+  <review status="unreviewed" notes=""/>
+  <url>http://ros.org/wiki/opticalFlow</url>
+  <depend package="sensor_msgs"/>
+  <depend package="opencv2"/>
+  <depend package="cv_bridge"/>
+  <depend package="roscpp"/>
+  <depend package="std_msgs"/>
+  <depend package="image_transport"/>
+  <depend package="turtlesim"/>
+  <depend package="ardrone_autonomy"/>
+  <depend package="std_srvs"/>
+
+</package>
+
+
