@@ -11,8 +11,10 @@
 #include <queue>
 #define _USE_MATH_DEFINES
 #include <math.h>
+#include <ardrone_autonomy/Navdata.h>
 
-#define GRIDSIZE 64
+#define GRIDSIZE 16
+#define NODEHISTSZ 4
 
 // Debug Defines
 //#define D_PQ_ORDER
@@ -39,6 +41,10 @@ struct Compare
 	 * has a larger magnitude
 	 */ 
 	bool operator()(FlowNode& f1, FlowNode& f2 ){
+		if(f2.angle < f1.angle){
+			return true;
+		}
+		/*
 		// f2 is closer to 0+
 		if((f1.angle >= 0) && (f2.angle >= 0) && (f2.angle < f1.angle)){
 			return true;
@@ -50,24 +56,26 @@ struct Compare
 		if((f2.angle >= 0) && (f1.angle < 0)){
 			return true;
 		}
+		*/
 		return false;
 	}
 };
 
+//! Implements a circular buffer of FlowNodes to maintain history
+struct NodeHist
+{
+	int curNode; // Indicates which is the most recent node
+	int histSz;  // Stores how many of the buffers are valid
+	FlowNode flowBuf[NODEHISTSZ];
+};
 
 // GLOBALS #############################################################
-FlowNode 	imageGrid[GRIDSIZE][GRIDSIZE];
+NodeHist 	imageGrid[GRIDSIZE][GRIDSIZE];
 std::priority_queue<FlowNode, std::vector<FlowNode>, Compare> flowPQ;
 double vidWidth;
 double vidHeight;
 cv::Point2f center;
-bool wantsToShutdown;
-
-//! Stop the main thread from spinning
-void mySigintHandler(int sig) {
-	wantsToShutdown = true;
-	ROS_WARN("Shutting down optical flow..");
-}
+ardrone_autonomy::Navdata navdata;
 
 //! Determines where the vector belongs and re-calculates the
 //! new average of that location.
@@ -81,7 +89,10 @@ void AddVector(cv::Point2f start, cv::Point2f end, float magnitude, float angle)
 	assert(i <= GRIDSIZE);
 	assert(j <= GRIDSIZE);
 	
-	FlowNode curNode = imageGrid[i][j];
+	int curNodeBuf = imageGrid[i][j].curNode;
+	// Caculate where to store the new node
+	int nextNodeBuf = curNodeBuf % NODEHISTSZ;
+	FlowNode curNode = imageGrid[i][j].flowBuf[curNodeBuf];
 	
 	curNode.i = i;
 	curNode.j = j;
@@ -123,18 +134,32 @@ void AddVector(cv::Point2f start, cv::Point2f end, float magnitude, float angle)
 	}
 	
 	//update
-	imageGrid[i][j] = curNode;
+	if(imageGrid[i][j].histSz < NODEHISTSZ){
+		imageGrid[i][j].histSz++;
+	}
+	imageGrid[i][j].curNode = nextNodeBuf;
+	imageGrid[i][j].flowBuf[nextNodeBuf] = curNode;
 }
 
 //! Pushes FlowNodes into the PQ after the matrix has been populated
-void BuildPQ()
+void BuildPQ(cv::Mat image)
 {
 	for(int i = 0; i<GRIDSIZE; i++){
 		for(int j = 0; j<GRIDSIZE; j++){
-			FlowNode pqElem = imageGrid[i][j];
+			int curNodeBuf = imageGrid[i][j].curNode;
+			FlowNode pqElem = imageGrid[i][j].flowBuf[curNodeBuf];
 			// NaN presence mean there were no flow vectors, ignore
-			if(!isnan(pqElem.angle) && !isnan(pqElem.magnitude)){
-				flowPQ.push(imageGrid[i][j]);
+			if(!isnan(pqElem.angle) && !isnan(pqElem.magnitude) && (pqElem.angle < 30)){
+				//Display the grid averages
+				cv::rectangle(image, pqElem.start-cv::Point2f(3,3), pqElem.start+cv::Point2f(2,2), 255, 5);
+				cv::rectangle(image, pqElem.start-cv::Point2f(3,3), pqElem.start+cv::Point2f(3,3), 0,   1);
+
+				cv::rectangle(image, pqElem.end-cv::Point2f(3,3), pqElem.end+cv::Point2f(2,2), 0,   5);
+				cv::rectangle(image, pqElem.end-cv::Point2f(3,3), pqElem.end+cv::Point2f(3,3), 255, 1);
+
+				cv::line(image, pqElem.start, pqElem.end, 0,   5); 
+				cv::line(image, pqElem.start, pqElem.end, 255, 1);
+				flowPQ.push(imageGrid[i][j].flowBuf[curNodeBuf]);
 			}
 		}
 	}
@@ -155,22 +180,27 @@ void InitImageMatrix()
 {
 	for(int i = 0; i<GRIDSIZE; i++){
 		for(int j = 0; j<GRIDSIZE; j++){
-			//clear out node varibles
-			FlowNode clearNode = imageGrid[i][j];
-			// Initialize all floats to NaN
-			clearNode.start.x = std::numeric_limits<float>::quiet_NaN();
-			clearNode.start.y = std::numeric_limits<float>::quiet_NaN();
-			clearNode.end.x = std::numeric_limits<float>::quiet_NaN();
-			clearNode.end.y = std::numeric_limits<float>::quiet_NaN();
-			clearNode.magnitude = std::numeric_limits<float>::quiet_NaN();
-			clearNode.angle = std::numeric_limits<float>::quiet_NaN();
-			
-			// Store index so we can jump to the imageGrid from the PQ.
-			clearNode.i = i;
-			clearNode.j = j;
-			
-			// Update the node
-			imageGrid[i][j] = clearNode;
+			//Loop those each node hist item
+			for(int k = 0; k<NODEHISTSZ; k++){
+				//clear out node varibles
+				FlowNode clearNode = imageGrid[i][j].flowBuf[k];
+				// Initialize all floats to NaN
+				clearNode.start.x = std::numeric_limits<float>::quiet_NaN();
+				clearNode.start.y = std::numeric_limits<float>::quiet_NaN();
+				clearNode.end.x = std::numeric_limits<float>::quiet_NaN();
+				clearNode.end.y = std::numeric_limits<float>::quiet_NaN();
+				clearNode.magnitude = std::numeric_limits<float>::quiet_NaN();
+				clearNode.angle = std::numeric_limits<float>::quiet_NaN();
+				
+				// Store index so we can jump to the imageGrid from the PQ.
+				clearNode.i = i;
+				clearNode.j = j;
+				
+				// Update the node
+				imageGrid[i][j].flowBuf[k] = clearNode;
+			}
+			// Reset the starting index
+			imageGrid[i][j].curNode = 0;
 		}
 	}
 }
@@ -212,7 +242,7 @@ float innerAngle(cv::Point2f oldPoint, cv::Point2f newPoint)
 		else
 		{
 			// Negative for moving away from us
-			angle = -1.0f*(angle*180/M_PI);
+			angle = (angle*180/M_PI) + 180;
 		}
 	}
 	return angle;
@@ -227,11 +257,15 @@ class OpticalFlow
 
   protected:
     void imageCallback(sensor_msgs::ImageConstPtr const & input_img_ptr);
+    void navdataCallback(ardrone_autonomy::Navdata const & new_navdata);
 
   private:
     ros::NodeHandle nh_;
     image_transport::ImageTransport it_;
     image_transport::Subscriber image_sub_;
+    ros::Subscriber navdata_sub;
+    
+    
     cv::Mat key_image_;
     std::vector<cv::Point2f> key_corners_;
 
@@ -243,6 +277,7 @@ OpticalFlow::OpticalFlow() : it_(nh_)
 {
 	// Subscriptions/Advertisements
 	image_sub_ = it_.subscribe("/ardrone/image_raw", 1, &OpticalFlow::imageCallback, this);
+	navdata_sub = nh_.subscribe("ardrone/navdata",  1, &OpticalFlow::navdataCallback, this);
 
 	nh_.param("num_keypoints", num_keypoints_param_, 500);
 	nh_.param("matchscore_thresh", matchscore_thresh_param_, 10e8);
@@ -269,6 +304,7 @@ std::vector<cv::Point2f> const & old_corners, std::vector<cv::Point2f> const & n
 		float const angle = innerAngle(old_corners[i], new_corners[i]);
 		//Only track points that have a valid angle
 		if(!isnan(angle) && !isinf(angle) && (pointDist != 0)){
+			/*
 			cv::rectangle(image, old_corners[i]-cv::Point2f(3,3), old_corners[i]+cv::Point2f(2,2), 255, 5);
 			cv::rectangle(image, old_corners[i]-cv::Point2f(3,3), old_corners[i]+cv::Point2f(3,3), 0,   1);
 
@@ -277,10 +313,11 @@ std::vector<cv::Point2f> const & old_corners, std::vector<cv::Point2f> const & n
 
 			cv::line(image, old_corners[i], new_corners[i], 0,   5); 
 			cv::line(image, old_corners[i], new_corners[i], 255, 1);
+			*/
 			AddVector(old_corners[i], new_corners[i], pointDist, angle);
 		}
 	}
-	BuildPQ();
+	BuildPQ(image);
 	
 	#ifdef D_PQ_ORDER
 		ROS_INFO("Start PQ READ");
@@ -426,6 +463,12 @@ void OpticalFlow::imageCallback(sensor_msgs::ImageConstPtr const & input_img_ptr
 		return;
 	}
 }
+//! Callback for new nav data
+void OpticalFlow::navdataCallback(ardrone_autonomy::Navdata const & new_navdata)
+{
+	navdata = new_navdata;
+	ROS_INFO("Velocity is: %i", navdata.vx);
+}
 
 //! Controls the rate in which optical the algo is ran
 int main(int argc, char ** argv)
@@ -433,7 +476,7 @@ int main(int argc, char ** argv)
 	ros::init(argc, argv, "contrast_enhancer");
 	OpticalFlow ofInit;
 	ros::Rate r(25); //30hz
-	while(!wantsToShutdown){
+	while(ros::ok()){
 		OpticalFlow of;
 		ros::spinOnce();
 		r.sleep();
