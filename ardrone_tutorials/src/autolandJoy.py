@@ -24,6 +24,9 @@ from dronetools import *
 import math
 import time
 
+# We need to use resource locking to handle synchronization between GUI thread and ROS topic callbacks
+from threading import Lock
+
 # Import the joystick message
 from sensor_msgs.msg import Joy
 
@@ -36,6 +39,9 @@ ButtonEmergency 		= 8
 ButtonLand      		= 1
 ButtonTakeoff   		= 0
 ButtonToggleAutoLand 	= 3
+ButtonToggleAvoidCollision = 5
+ButtonCalibrateColor	= 4
+
 
 # define the default mapping between joystick axes and their corresponding directions
 AxisRoll        = 0
@@ -50,16 +56,42 @@ ScaleYaw        = 1.0
 ScaleZ          = 1.0
 
 DoAutoLand = False
+DoAvoidCollision = False
 
+
+def updateUIText(element, update):
+	global uiLock
+	
+	uiLock.acquire()
+	try:			
+		#~ rospy.loginfo("before")
+		element.setText(QtGui.QApplication.translate("MainWindow", update, None, QtGui.QApplication.UnicodeUTF8))
+		#~ rospy.loginfo("after")
+	finally:
+		uiLock.release()
+	
+
+def updateUIGeo(element, update):
+	global uiLock
+	
+	uiLock.acquire()
+	try:			
+		element.setGeometry(update)
+	finally:
+		uiLock.release()
+		
 
 # handles the reception of joystick packets
 def ReceiveJoystickMessage(data):
 	global DoAutoLand
+	global DoAvoidCollision
 	global hasExecutedLand
+	global pitch
 	DoAutoLand = data.buttons[ButtonToggleAutoLand]
+	DoAvoidCollision = data.buttons[ButtonToggleAvoidCollision]
 	#rospy.loginfo("Autoland: %f", DoAutoLand)
 	if not DoAutoLand:
-		ui.labelAutoLandStatus.setText(QtGui.QApplication.translate("MainWindow", "Off", None, QtGui.QApplication.UnicodeUTF8))
+		updateUIText(ui.labelAutoLandStatus, "Off")
 	
 	if data.buttons[ButtonEmergency]==1:
 		rospy.loginfo("Emergency Button Pressed")
@@ -103,7 +135,12 @@ def ReceiveJoystickMessage(data):
 		#rospy.loginfo(data)
 		
 		if not DoAutoLand:
-			controller.SetCommand(roll,pitch,yaw,zvel)
+			if not DoAvoidCollision or DoAvoidCollision and not collisionDetected:
+				setCommand(pitch,roll,yaw,zvel)
+	
+	if data.buttons[ButtonCalibrateColor] == 1:
+		colorPub.publish(True)
+		#	rospy.loginfo("Color change")
 		
 def ReceiveLandingPadPosition(position):
 	global lpadPosition
@@ -135,10 +172,12 @@ def ReceiveLandingPadPosition(position):
 	vectorlPadToCenter[1] = offsety/frameSize[1]*2 # be the same but the camera is not square
 	#rospy.loginfo(vectorlPadToCenter)
 	
-	ui.labelDroneMarker.setGeometry(QtCore.QRect((320 - position.x/2)-15, (180 - position.y/2)-15, 30, 30))
+	updateUIGeo(ui.labelDroneMarker,QtCore.QRect((320 - position.x/2)-15, (180 - position.y/2)-15, 30, 30)) 
 	
-	if DoAutoLand and not hasExecutedLand:
-		ui.labelAutoLandStatus.setText(QtGui.QApplication.translate("MainWindow", "Centering over pad", None, QtGui.QApplication.UnicodeUTF8))
+	calculateAngles(position)
+	
+	if DoAutoLand and not hasExecutedLand and navdata.altd > 0:
+		updateUIText(ui.labelAutoLandStatus, "Centering over pad")
 		pitch1 = vectorlPadToCenter[1] - vpy
 		roll1 = vectorlPadToCenter[0] - vpx
 		pitch2 = vectorlPadToCenter[1] - navdata.vy/1000.0
@@ -166,6 +205,7 @@ def ReceiveLandingPadPosition(position):
 			pitch = math.copysign(-0.0240719*p+1.39116*pow(p,2)-0.54625*pow(p,3),pitch)/15.0*navdata.altd/3000.0
 			roll = math.copysign(-0.0240719*r+1.39116*pow(r,2)-0.54625*pow(r,3),roll)/15.0*navdata.altd/3000.0
 			
+		# Sanity check on control signals
 		if abs(pitch) > 5 or abs(roll) > 5:
 			rospy.loginfo("pitch: %f, roll: %f, p: %f, r: %f, navdata.altd: %f, vpx %f, vpy %f", pitch, roll, p, r, navdata.altd, vpx, vpy)
 			rospy.loginfo("Land")
@@ -180,38 +220,46 @@ def ReceiveLandingPadPosition(position):
 		if acceptableOffset < 50:
 			acceptableOffset = 50
 		rospy.loginfo("ALTD: %f    Veldrone: %f    AVD: %f    OffsetMag: %f    AOM: %f", navdata.altd, veldrone, acceptableVelDrone, offsetmag, acceptableOffset)
-		ui.labelLandCondVals.setText(QtGui.QApplication.translate("MainWindow", "ALTD: %.4f    Veldrone: %.4f    AVD: %.4f    OffsetMag: %.4f    AOM: %.4f" % (navdata.altd, veldrone, acceptableVelDrone, offsetmag, acceptableOffset), None, QtGui.QApplication.UnicodeUTF8))
+		updateUIText(ui.labelLandCondVals, "ALTD: %.4f    Veldrone: %.4f    AVD: %.4f    OffsetMag: %.4f    AOM: %.4f" % (navdata.altd, veldrone, acceptableVelDrone, offsetmag, acceptableOffset))
 		
 		if veldrone < acceptableVelDrone and offsetmag < acceptableOffset:
 			rospy.loginfo("Landing conditions met, moving drone down!")
-			ui.labelAcceptableVelocity.setText(QtGui.QApplication.translate("MainWindow", "Acceptable Velocity: Yes", None, QtGui.QApplication.UnicodeUTF8))
-			ui.labelAcceptableOffset.setText(QtGui.QApplication.translate("MainWindow", "Acceptable Offset: Yes", None, QtGui.QApplication.UnicodeUTF8))
-			ui.labelLandCond.setText(QtGui.QApplication.translate("MainWindow", "Landing Conditions: Met", None, QtGui.QApplication.UnicodeUTF8))
+			updateUIText(ui.labelAcceptableVelocity, "Acceptable Velocity: Yes")
+			updateUIText(ui.labelAcceptableOffset, "Acceptable Offset: Yes")
+			updateUIText(ui.labelLandCond, "Landing Conditions: Met")
+			
 			landingCondMet = True
-			zvel = -0.8
-			controller.SetCommand(roll, pitch, yaw, zvel)
-			#controller.SetCommand(0, 0, 0, -0.8)
+			zvel = -0.8 * navdata.altd / 1000 * (navdata.altd > 500)
+			setCommand(roll, pitch, yaw, zvel)
 			if (time.time() - t0) > 3*navdata.altd/1000 and navdata.altd < 1000 or navdata.altd < 600:
 				rospy.loginfo("Land")
 				hasExecutedLand = True
 				controller.SendLand()
 		else:
-			ui.labelLandCond.setText(QtGui.QApplication.translate("MainWindow", "Landing Conditions: Not Met", None, QtGui.QApplication.UnicodeUTF8))
+			#~ ui.labelLandCond.setText(QtGui.QApplication.translate("MainWindow", "Landing Conditions: Not Met", None, QtGui.QApplication.UnicodeUTF8))
+			updateUIText(ui.labelLandCond, "Landing Conditions: Not Met")
 			if veldrone > acceptableVelDrone:
-				rospy.loginfo("Unacceptable Velocity")
-				ui.labelAcceptableVelocity.setText(QtGui.QApplication.translate("MainWindow", "Acceptable Velocity: No", None, QtGui.QApplication.UnicodeUTF8))
+				#rospy.loginfo("Unacceptable Velocity")
+				updateUIText(ui.labelAcceptableVelocity, "Acceptable Velocity: No")
 			else:
-				ui.labelAcceptableVelocity.setText(QtGui.QApplication.translate("MainWindow", "Acceptable Velocity: Yes", None, QtGui.QApplication.UnicodeUTF8))
+				updateUIText(ui.labelAcceptableVelocity, "Acceptable Velocity: Yes")
 			if offsetmag > acceptableOffset:
-				rospy.loginfo("Unacceptable Offset")
-				ui.labelAcceptableOffset.setText(QtGui.QApplication.translate("MainWindow", "Acceptable Offset: No", None, QtGui.QApplication.UnicodeUTF8))
+				#rospy.loginfo("Unacceptable Offset")
+				updateUIText(ui.labelAcceptableOffset, "Acceptable Offset: No")
 			else: 
-				ui.labelAcceptableOffset.setText(QtGui.QApplication.translate("MainWindow", "Acceptable Offset: Yes", None, QtGui.QApplication.UnicodeUTF8))
+				updateUIText(ui.labelAcceptableOffset, "Acceptable Offset: Yes")
 			landingCondMet = False
+			zvel = -0.2 * (navdata.altd > 900)
 			rospy.loginfo("!!!!! Automatically moving drone! roll: %f    pitch: %f    yaw: %f    z: %f    vpx: %f    vpy: %f", roll, pitch, yaw, zvel, vpx, vpy)
-			controller.SetCommand(roll, pitch, yaw, zvel)
-	
-	
+			setCommand(pitch, roll, yaw, zvel)
+
+def calculateAngles(position):
+	rospy.loginfo("Hello")
+
+def setCommand(pitch, roll, yaw, zvel):
+	controller.SetCommand(roll, pitch, yaw, zvel)
+	updateUIText(ui.labelSetCommand, "pitch: %.4f, roll: %.4f, yaw: %.4f, zvel: %.4f" % (pitch, roll, yaw, zvel))
+
 def ReceiveLandingPadFrameSize(frame):
 	global frameSize
 	frameSize = frame.data
@@ -220,12 +268,43 @@ def ReceiveLandingPadFrameSize(frame):
 def SwapCamera():
 	rospy.loginfo("Swap Camera")
 	toggleCam()
+	
+def TrimDrone():
+	rospy.loginfo("Trim Drone")
+	trimDrone()
 
 def ReceiveNavdata(nd):
 	global navdata
 	navdata = nd
+	try:
+		updateUIText(ui.labelNavDataAltd, "altd: %f" % (navdata.altd))
+		updateUIText(ui.labelNavDataVelocity, "vx: %04d vy: %04d vz: %04d" % (navdata.vx, navdata.vy, navdata.vz))
+		updateUIText(ui.labelNavDataAccel, "ax: %.4f ay: %.4f az: %.4f" % (navdata.ax, navdata.ay, navdata.az))
+		updateUIText(ui.labelNavDataRot, "rotX: %.4f rotY: %.4f rotZ: %.4f" % (navdata.rotX, navdata.rotY, navdata.rotZ))
+		updateUIText(ui.labelNavDataBattery, "battery: %f" % (navdata.batteryPercent))
+	except:
+		rospy.loginfo("UI Update error")
+		
 	#rospy.loginfo(navdata)
 	#rospy.loginfo(nd.altd)
+	
+def ReceiveCollisionDetected(det):
+	global collisionDetected
+	collisionDetected = det
+	
+	if DoAvoidCollision and not collisionDetected:
+		# Stop moving drone if had been moving drone
+		setCommand(0,0,0,0)
+	
+def ReceiveAvoidDirection(vec):
+	global avoidDirection
+	global pitch
+	avoidDirection = vec
+	
+	if DoAvoidCollision and collisionDetected:
+		# Move drone in avoidance direction supplied by collision detection routine
+		setCommand(pitch,vec.x,0,vec.y)
+	
 
 # Setup the application
 if __name__=='__main__':
@@ -254,6 +333,7 @@ if __name__=='__main__':
 
 	# subscribe to the /joy topic and handle messages of type Joy with the function ReceiveJoystickMessage
 	subJoystick = rospy.Subscriber('/joy', Joy, ReceiveJoystickMessage)
+	pitch = 0
 
 	# variables to hold landing pad data
 	lpadPosition = None
@@ -265,26 +345,39 @@ if __name__=='__main__':
 	lastReceived = time.time()
 	landingCondMet = False
 
-	# subscribe to landing pad tracker
-	sublpadTrackerFrameSize = rospy.Subscriber('/landingPadTracker/frameSize', numpy_msg(std_msgs.msg.Int32MultiArray), ReceiveLandingPadFrameSize)
-	sublpadTrackerPosition = rospy.Subscriber('/landingPadTracker/landingPadPosition', numpy_msg(geometry_msgs.msg.Point), ReceiveLandingPadPosition)
-
-	# connect to ardrone service
-	toggleCam = rospy.ServiceProxy('ardrone/togglecam', std_srvs.srv.Empty)
-	
-	# subscribe to navdata
-	navdata = None
-	sublpadTrackerPosition = rospy.Subscriber('/ardrone/navdata', numpy_msg(Navdata), ReceiveNavdata)
-
 	# display camera view
 	display.show()
 	
 	# display main window
-	MainWindow = QtGui.QMainWindow()
 	ui = Ui_MainWindow()
+	MainWindow = QtGui.QMainWindow()
 	ui.setupUi(MainWindow)
 	MainWindow.show()
 	QtCore.QObject.connect(ui.pushButtonSwapCamera, QtCore.SIGNAL("clicked()"), SwapCamera)
+	QtCore.QObject.connect(ui.pushButtonTrim, QtCore.SIGNAL("clicked()"), TrimDrone)
+	uiLock = Lock()
+	
+	# subscribe to landing pad tracker
+	sublpadTrackerFrameSize = rospy.Subscriber('/landingPadTracker/frameSize', numpy_msg(std_msgs.msg.Int32MultiArray), ReceiveLandingPadFrameSize)
+	sublpadTrackerPosition = rospy.Subscriber('/landingPadTracker/landingPadPosition', numpy_msg(geometry_msgs.msg.Point), ReceiveLandingPadPosition)
+
+	# Color calibration publisher
+	colorPub = rospy.Publisher('landingPadTracker/setColorMsg',std_msgs.msg.Bool)
+
+	# connect to ardrone service
+	toggleCam = rospy.ServiceProxy('ardrone/togglecam', std_srvs.srv.Empty)
+	trimDrone = rospy.ServiceProxy('ardrone/flattrim', std_srvs.srv.Empty)
+	
+	# subscribe to collision program
+	subCollisionDetected = rospy.Subscriber('collisionDetect/willCollide', numpy_msg(std_msgs.msg.Bool), ReceiveCollisionDetected)
+	subAvoidDirection = rospy.Subscriber('collisionAvoid/avoidanceDirection', numpy_msg(geometry_msgs.msg.Point), ReceiveAvoidDirection)
+	collisionDetected = False
+	avoidDirection = None
+    
+	
+	# subscribe to navdata
+	navdata = None
+	sublpadTrackerPosition = rospy.Subscriber('/ardrone/navdata', numpy_msg(Navdata), ReceiveNavdata)
 	
 	# execute QT application
 	status = app.exec_()

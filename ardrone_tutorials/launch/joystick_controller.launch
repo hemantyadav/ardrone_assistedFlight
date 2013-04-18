@@ -1,6 +1,6 @@
 <launch>
 	<!-- Launches the AR.Drone driver -->
-	<node name="ardrone_driver" pkg="ardrone_autonomy" type="ardrone_driver" output="screen" clear_params="true" args="-ip 192.168.1.1">
+	<node name="ardrone_driver" pkg="ardrone_autonomy" type="ardrone_driver" output="screen" clear_params="true" args="-ip 192.168.10.1">
 	    <param name="outdoor" value="0" />				<!-- If we are flying outdoors, will select more aggressive default settings -->
 	    <param name="flight_without_shell" value="0" /> <!-- Changes internal controller gains if we are flying without the propeller guard -->
 	    
@@ -13,7 +13,7 @@
 	</node>
 
 	<node name="joy_node" pkg="joy" type="joy_node" output="screen" clear_params="true">
-		<param name="dev" type="str" value="/dev/input/js1"/>
+		<param name="dev" type="str" value="/dev/input/js0"/>
 	</node>
 	
 	<!-- Launches the joystick controller -->

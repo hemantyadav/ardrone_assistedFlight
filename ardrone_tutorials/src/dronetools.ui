@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>800</width>
+    <width>891</width>
     <height>600</height>
    </rect>
   </property>
@@ -17,7 +17,7 @@
    <widget class="QPushButton" name="pushButtonSwapCamera">
     <property name="geometry">
      <rect>
-      <x>690</x>
+      <x>780</x>
       <y>10</y>
       <width>101</width>
       <height>27</height>
@@ -32,8 +32,8 @@
      <rect>
       <x>10</x>
       <y>10</y>
-      <width>371</width>
-      <height>301</height>
+      <width>501</width>
+      <height>401</height>
      </rect>
     </property>
     <property name="title">
@@ -133,6 +133,162 @@
       <string>Off</string>
      </property>
     </widget>
+    <widget class="QLabel" name="labelSetCommand">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>240</y>
+       <width>461</width>
+       <height>17</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>pitch: 0, roll: 0, yaw: 0, zvel: 0</string>
+     </property>
+    </widget>
+    <widget class="QLabel" name="labelLandCond">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>260</y>
+       <width>431</width>
+       <height>17</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Landing Conditions: Not Met</string>
+     </property>
+    </widget>
+    <widget class="QLabel" name="labelLandCondVals">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>280</y>
+       <width>481</width>
+       <height>17</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>ALTD: 0, Veldrone: 0, OffsetMag: 0, AOM: 0</string>
+     </property>
+    </widget>
+    <widget class="QLabel" name="labelAcceptableVelocity">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>300</y>
+       <width>311</width>
+       <height>17</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Acceptable Velocity: No</string>
+     </property>
+    </widget>
+    <widget class="QLabel" name="labelAcceptableOffset">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>320</y>
+       <width>311</width>
+       <height>17</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Acceptable Offset: No</string>
+     </property>
+    </widget>
+   </widget>
+   <widget class="QPushButton" name="pushButtonTrim">
+    <property name="geometry">
+     <rect>
+      <x>780</x>
+      <y>50</y>
+      <width>101</width>
+      <height>27</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Trim</string>
+    </property>
+   </widget>
+   <widget class="QGroupBox" name="groupBoxNavData">
+    <property name="geometry">
+     <rect>
+      <x>530</x>
+      <y>0</y>
+      <width>231</width>
+      <height>291</height>
+     </rect>
+    </property>
+    <property name="title">
+     <string>NavData</string>
+    </property>
+    <widget class="QLabel" name="labelNavDataAltd">
+     <property name="geometry">
+      <rect>
+       <x>0</x>
+       <y>20</y>
+       <width>131</width>
+       <height>17</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>altd: 0000</string>
+     </property>
+    </widget>
+    <widget class="QLabel" name="labelNavDataVelocity">
+     <property name="geometry">
+      <rect>
+       <x>0</x>
+       <y>40</y>
+       <width>221</width>
+       <height>17</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>vx: 0.0000 vy:0.0000 vz: 0.0000</string>
+     </property>
+    </widget>
+    <widget class="QLabel" name="labelNavDataRot">
+     <property name="geometry">
+      <rect>
+       <x>0</x>
+       <y>80</y>
+       <width>231</width>
+       <height>17</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>rotX: 0.0000 rotY: 0.0000 rotZ: 0.0000</string>
+     </property>
+    </widget>
+    <widget class="QLabel" name="labelNavDataBattery">
+     <property name="geometry">
+      <rect>
+       <x>0</x>
+       <y>100</y>
+       <width>111</width>
+       <height>17</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>battery: 100%</string>
+     </property>
+    </widget>
+    <widget class="QLabel" name="labelNavDataAccel">
+     <property name="geometry">
+      <rect>
+       <x>0</x>
+       <y>60</y>
+       <width>221</width>
+       <height>17</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>ax: 0.0000 ay:0.0000 az: 0.0000</string>
+     </property>
+    </widget>
    </widget>
   </widget>
   <widget class="QMenuBar" name="menubar">
@@ -140,7 +296,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>800</width>
+     <width>891</width>
      <height>25</height>
     </rect>
    </property>
