@@ -122,9 +122,9 @@ class ImageConverter
 	 	 pubPosition = nh_.advertise<geometry_msgs::Point>("landingPadTracker/landingPadPosition", 5);
 	 	 frameSize.data.clear();
 	 	 
-		 lpad_B.x = lpad_A.x = 0.0f;
-		 lpad_B.y = lpad_A.y = 0.0f;
-		 lpad_B.z = lpad_A.z = 0.0f;
+		 lpad_A.x = 0.0f;
+		 lpad_A.y = 0.0f;
+		 lpad_A.z = 0.0f;
 	 	 
 	 	 
 	 	 namedWindow(WINDOW);
