@@ -13,7 +13,7 @@
 #include <queue>
 #define _USE_MATH_DEFINES
 #include <math.h>
-#include <ardrone_autonomy/Navdata.h>
+//#include <ardrone_autonomy/Navdata.h>
 
 #define GRIDSIZE 4
 #define NODEHISTSZ 4
@@ -79,7 +79,7 @@ std::priority_queue<FlowNode, std::vector<FlowNode>, Compare> flowPQ;
 double vidWidth;
 double vidHeight;
 cv::Point2f center;
-ardrone_autonomy::Navdata navdata;
+//ardrone_autonomy::Navdata navdata;
 // Published data
 geometry_msgs::Point avoidanceDirection;
 std_msgs::Bool willCollide;
@@ -158,15 +158,39 @@ void BuildPQ(cv::Mat image)
 			FlowNode pqElem = imageGrid[i][j].flowBuf[curNodeBuf];
 			// NaN presence mean there were no flow vectors, ignore
 			if(!isnan(pqElem.angle) && !isnan(pqElem.magnitude)){
-				//Display the grid averages
+				cv::Scalar lineColor;
+				int line_thickness = 2;
+				if((pqElem.angle < 20) && (pqElem.magnitude >20)){
+					lineColor = cv::Scalar(0, 0, 255);
+				}else{
+					lineColor = cv::Scalar(255, 0 , 0);
+				}
+				
+				// Now we draw the main line of the arrow.
+				cv::line(image, pqElem.start, pqElem.end, lineColor, line_thickness);
+
+				// Now draw the tips of the arrow. I do some scaling so that the
+				// tips look proportional to the main line of the arrow.
+				cv::Point2f p;
+				double angle = atan2((double) pqElem.start.y - pqElem.end.y, (double) pqElem.start.x - pqElem.end.x);
+				p.x = (int) (pqElem.end.x + 9 * cos(angle + CV_PI / 4));
+				p.y = (int) (pqElem.end.y + 9 * sin(angle + CV_PI / 4));
+				line(image, p, pqElem.end, lineColor, line_thickness);
+
+				p.x = (int) (pqElem.end.x + 9 * cos(angle - CV_PI / 4));
+				p.y = (int) (pqElem.end.y + 9 * sin(angle - CV_PI / 4));
+				line(image, p, pqElem.end, lineColor, line_thickness);
+				
+				/*
 				cv::rectangle(image, pqElem.start-cv::Point2f(3,3), pqElem.start+cv::Point2f(2,2), 255, 5);
-				cv::rectangle(image, pqElem.start-cv::Point2f(3,3), pqElem.start+cv::Point2f(3,3), 0,   1);
+				cv::rectangle(image, pqElem.start-cv::Point2f(3,3), pqElem.start+cv::Point2f(3,3), lineColor,   1);
 
 				cv::rectangle(image, pqElem.end-cv::Point2f(3,3), pqElem.end+cv::Point2f(2,2), 0,   5);
 				cv::rectangle(image, pqElem.end-cv::Point2f(3,3), pqElem.end+cv::Point2f(3,3), 255, 1);
 
-				cv::line(image, pqElem.start, pqElem.end, 0,   5); 
-				cv::line(image, pqElem.start, pqElem.end, 255, 1);
+				cv::line(image, pqElem.start, pqElem.end, cv::Scalar(0,0,0),   2); 
+				cv::line(image, pqElem.start, pqElem.end, lineColor, 1);
+				*/ 
 				flowPQ.push(imageGrid[i][j].flowBuf[curNodeBuf]);
 			}
 		}
@@ -221,13 +245,6 @@ void InitImageMatrix()
 	}
 }
 
-//! Calculate 
-float findTTC(FlowNode node)
-{
-	return 1.0f/(sqrt((pow(node.end.x, 2.0f) + pow(node.end.y,2.0f))/(pow(node.start.x,2.0f) + pow(node.start.y,2.0f))) - 1.0f);
-}
-
-
 //! Calculates the angle of approach relative to the center of
 //! the screen.
 float innerAngle(cv::Point2f oldPoint, cv::Point2f newPoint)
@@ -280,7 +297,7 @@ class OpticalFlow
 
   protected:
     void imageCallback(sensor_msgs::ImageConstPtr const & input_img_ptr);
-    void navdataCallback(ardrone_autonomy::Navdata const & new_navdata);
+    //void navdataCallback(ardrone_autonomy::Navdata const & new_navdata);
     void CollisionAvoidance();
     void FindAvoidVector(FlowNode collisionNode);
 
@@ -288,7 +305,7 @@ class OpticalFlow
     ros::NodeHandle nh_;
     image_transport::ImageTransport it_;
     image_transport::Subscriber image_sub_;
-    ros::Subscriber navdata_sub;
+    //ros::Subscriber navdata_sub;
     ros::Publisher pubAvoidDirection;
     ros::Publisher pubCollisionDetect;
     
@@ -304,7 +321,7 @@ OpticalFlow::OpticalFlow() : it_(nh_)
 {
 	// Subscriptions/Advertisements
 	image_sub_ = it_.subscribe("/ardrone/image_raw", 1, &OpticalFlow::imageCallback, this);
-	navdata_sub = nh_.subscribe("ardrone/navdata",  1, &OpticalFlow::navdataCallback, this);
+	//navdata_sub = nh_.subscribe("ardrone/navdata",  1, &OpticalFlow::navdataCallback, this);
 	
 	//Published messages
 	pubAvoidDirection = nh_.advertise<geometry_msgs::Point>("collisionAvoid/avoidanceDirection", 5);
@@ -453,42 +470,47 @@ void trackFeatures(cv::Mat key_image, cv::Mat curr_image, std::vector<cv::Point2
 //! When a new image is posted we run the algo.
 void OpticalFlow::imageCallback(sensor_msgs::ImageConstPtr const & input_img_ptr)
 {
-	cv_bridge::CvImageConstPtr cv_ptr;
+	cv_bridge::CvImageConstPtr cv_ptr_gray;
+	cv_bridge::CvImageConstPtr cv_ptr_color;
 	//Increment the number of image frames we have seen
 	try
 	{
-		cv_ptr = cv_bridge::toCvShare(input_img_ptr, sensor_msgs::image_encodings::MONO8);
-
-		cv::Mat input_image = cv_ptr->image;
-
+		cv_ptr_gray = cv_bridge::toCvShare(input_img_ptr, sensor_msgs::image_encodings::MONO8);
+		cv_ptr_color = cv_bridge::toCvShare(input_img_ptr, sensor_msgs::image_encodings::BGR8);
+		
+		
+		cv::Mat input_image_gray = cv_ptr_gray->image;
+		cv::Mat input_image_color = cv_ptr_color->image;
+		
 		//Set the video params
-		vidWidth = input_image.cols;
-		vidHeight = input_image.rows;
-		center.x = input_image.cols/2.0f;
-		center.y = input_image.rows/2.0f;
+		vidWidth = input_image_gray.cols;
+		vidHeight = input_image_gray.rows;
+		center.x = input_image_gray.cols/2.0f;
+		center.y = input_image_gray.rows/2.0f;
 
 		// Grab a new keyframe whenever we have lost more than 1/2 of our tracks
 		std::vector<cv::Point2f> new_features;
 		if(key_corners_.size() < (size_t(num_keypoints_param_ / 2)))
 		{
-			cv::goodFeaturesToTrack(input_image, new_features, (num_keypoints_param_ - key_corners_.size()), 0.01, 30);
+			cv::goodFeaturesToTrack(input_image_gray, new_features, (num_keypoints_param_ - key_corners_.size()), 0.01, 30);
 			//add the new features to the existing ones
 			mergeFeatures(key_corners_, new_features);
-			key_image_ = input_image.clone(); 
+			key_image_ = input_image_gray.clone(); 
 		}
 
 		// Track the features from the keyframe to the current frame
 		std::vector<cv::Point2f> new_corners;
-		trackFeatures(key_image_, input_image, key_corners_, new_corners);
+		trackFeatures(key_image_, input_image_gray, key_corners_, new_corners);
 
 		// Draw the features on the input image
 		if(key_corners_.size()){
-			drawFeatures(input_image, key_corners_, new_corners);
+			// TODO use color here
+			drawFeatures(input_image_color, key_corners_, new_corners);
 			// Read the PQ and determine immenant collisions
 			CollisionAvoidance();
 		}
 		
-		cv::imshow("tracker (press key for keyframe)", input_image);
+		cv::imshow("tracker (press key for keyframe)", input_image_color);
 		cv::waitKey(2);
 	}
 	catch(cv_bridge::Exception & e)
@@ -497,11 +519,13 @@ void OpticalFlow::imageCallback(sensor_msgs::ImageConstPtr const & input_img_ptr
 		return;
 	}
 }
+/*
 //! Callback for new nav data
 void OpticalFlow::navdataCallback(ardrone_autonomy::Navdata const & new_navdata)
 {
 	navdata = new_navdata;
 }
+*/ 
 
 std::vector<FlowNode> GetNodeNeighbors(int i, int j)
 {
@@ -571,10 +595,7 @@ void OpticalFlow::CollisionAvoidance()
 		if(pqElem.angle > 30){
 			noImminent = true;
 		}
-		float ttc = findTTC(pqElem);
-		#ifdef D_COL_DETECT
-			ROS_INFO("TTC is: %f", ttc);
-		#endif
+		
 		// Check if collision is imminent
 		if((pqElem.angle < 20) && (pqElem.magnitude > 20)){
 			// Set the imminent collision flag
