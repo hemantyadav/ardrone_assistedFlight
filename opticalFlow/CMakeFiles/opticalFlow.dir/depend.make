@@ -5,6 +5,7 @@ CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /home/ardrone/ros_workspace/ardron
 CMakeFiles/opticalFlow.dir/src/opticalFlow.o: src/opticalFlow.cpp
 CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /opt/ros/fuerte/include/XmlRpcDecl.h
 CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /opt/ros/fuerte/include/XmlRpcValue.h
+CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /opt/ros/fuerte/include/geometry_msgs/Point.h
 CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /opt/ros/fuerte/include/opencv2/calib3d/calib3d.hpp
 CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /opt/ros/fuerte/include/opencv2/core/core.hpp
 CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /opt/ros/fuerte/include/opencv2/core/core_c.h
@@ -77,6 +78,7 @@ CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /opt/ros/fuerte/include/sensor_msg
 CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /opt/ros/fuerte/include/sensor_msgs/Image.h
 CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /opt/ros/fuerte/include/sensor_msgs/RegionOfInterest.h
 CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /opt/ros/fuerte/include/sensor_msgs/image_encodings.h
+CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /opt/ros/fuerte/include/std_msgs/Bool.h
 CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /opt/ros/fuerte/include/std_msgs/Header.h
 CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /opt/ros/fuerte/stacks/image_common/image_transport/include/image_transport/camera_publisher.h
 CMakeFiles/opticalFlow.dir/src/opticalFlow.o: /opt/ros/fuerte/stacks/image_common/image_transport/include/image_transport/camera_subscriber.h

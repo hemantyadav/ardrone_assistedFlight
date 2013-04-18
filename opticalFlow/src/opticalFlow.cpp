@@ -1,4 +1,6 @@
 #include <ros/ros.h>
+#include <geometry_msgs/Point.h>
+#include "std_msgs/Bool.h"
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
 #include <sensor_msgs/image_encodings.h>
@@ -18,6 +20,7 @@
 
 // Debug Defines
 //#define D_PQ_ORDER
+#define D_COL_DETECT
 
 // STRUCTS #############################################################
 struct FlowNode
@@ -76,6 +79,10 @@ double vidWidth;
 double vidHeight;
 cv::Point2f center;
 ardrone_autonomy::Navdata navdata;
+// Published data
+geometry_msgs::Point avoidanceDirection;
+std_msgs::Bool willCollide;
+
 
 //! Determines where the vector belongs and re-calculates the
 //! new average of that location.
@@ -164,6 +171,22 @@ void BuildPQ(cv::Mat image)
 		}
 	}
 }
+
+void initFlowNode(FlowNode &node, int i, int j)
+{
+	// Initialize all floats to NaN
+	node.start.x = std::numeric_limits<float>::quiet_NaN();
+	node.start.y = std::numeric_limits<float>::quiet_NaN();
+	node.end.x = std::numeric_limits<float>::quiet_NaN();
+	node.end.y = std::numeric_limits<float>::quiet_NaN();
+	node.magnitude = std::numeric_limits<float>::quiet_NaN();
+	node.angle = std::numeric_limits<float>::quiet_NaN();
+				
+	// Store index so we can jump to the imageGrid from the PQ.
+	node.i = i;
+	node.j = j;
+}
+
 //! Sets inital values to the image matrix
 /**
  * Initializes each FlowNode in the matrix to:
@@ -185,16 +208,8 @@ void InitImageMatrix()
 				//clear out node varibles
 				FlowNode clearNode = imageGrid[i][j].flowBuf[k];
 				// Initialize all floats to NaN
-				clearNode.start.x = std::numeric_limits<float>::quiet_NaN();
-				clearNode.start.y = std::numeric_limits<float>::quiet_NaN();
-				clearNode.end.x = std::numeric_limits<float>::quiet_NaN();
-				clearNode.end.y = std::numeric_limits<float>::quiet_NaN();
-				clearNode.magnitude = std::numeric_limits<float>::quiet_NaN();
-				clearNode.angle = std::numeric_limits<float>::quiet_NaN();
 				
-				// Store index so we can jump to the imageGrid from the PQ.
-				clearNode.i = i;
-				clearNode.j = j;
+				initFlowNode(clearNode, i,j);
 				
 				// Update the node
 				imageGrid[i][j].flowBuf[k] = clearNode;
@@ -204,6 +219,13 @@ void InitImageMatrix()
 		}
 	}
 }
+
+//! Calculate 
+int findTTC(FlowNode node)
+{
+	return 1/(sqrt((pow(node.end.x, 2) + pow(node.end.y,2))/(pow(node.start.x,2) + pow(node.start.y,2))) + 1);
+}
+
 
 //! Calculates the angle of approach relative to the center of
 //! the screen.
@@ -258,12 +280,16 @@ class OpticalFlow
   protected:
     void imageCallback(sensor_msgs::ImageConstPtr const & input_img_ptr);
     void navdataCallback(ardrone_autonomy::Navdata const & new_navdata);
+    void CollisionAvoidance();
+    void FindAvoidVector(FlowNode collisionNode);
 
   private:
     ros::NodeHandle nh_;
     image_transport::ImageTransport it_;
     image_transport::Subscriber image_sub_;
     ros::Subscriber navdata_sub;
+    ros::Publisher pubAvoidDirection;
+    ros::Publisher pubCollisionDetect;
     
     
     cv::Mat key_image_;
@@ -278,7 +304,11 @@ OpticalFlow::OpticalFlow() : it_(nh_)
 	// Subscriptions/Advertisements
 	image_sub_ = it_.subscribe("/ardrone/image_raw", 1, &OpticalFlow::imageCallback, this);
 	navdata_sub = nh_.subscribe("ardrone/navdata",  1, &OpticalFlow::navdataCallback, this);
-
+	
+	//Published messages
+	pubAvoidDirection = nh_.advertise<geometry_msgs::Point>("collisionAvoid/avoidanceDirection", 5);
+	pubCollisionDetect = nh_.advertise<std_msgs::Bool>("collisionDetect/willCollide", 5);
+	
 	nh_.param("num_keypoints", num_keypoints_param_, 500);
 	nh_.param("matchscore_thresh", matchscore_thresh_param_, 10e8);
 }
@@ -453,7 +483,10 @@ void OpticalFlow::imageCallback(sensor_msgs::ImageConstPtr const & input_img_ptr
 		// Draw the features on the input image
 		if(key_corners_.size()){
 			drawFeatures(input_image, key_corners_, new_corners);
+			// Read the PQ and determine immenant collisions
+			CollisionAvoidance();
 		}
+		
 		cv::imshow("tracker (press key for keyframe)", input_image);
 		cv::waitKey(2);
 	}
@@ -467,7 +500,77 @@ void OpticalFlow::imageCallback(sensor_msgs::ImageConstPtr const & input_img_ptr
 void OpticalFlow::navdataCallback(ardrone_autonomy::Navdata const & new_navdata)
 {
 	navdata = new_navdata;
-	ROS_INFO("Velocity is: %i", navdata.vx);
+}
+
+std::vector<FlowNode> GetNodeNeighbors(int i, int j)
+{
+	ROS_INFO("curent node at (%i,%i)", i, j);
+	// TODO filter nodes based on history
+	std::vector<FlowNode> neighbors;
+	//neighbors.push_back(imageGrid[i][j]
+	for(int x = (i-1); x < (i+2); x++){
+		for(int y = (j-1); y < (j+2); y++){
+			// Do not add the center node
+			if((0 <= x) && (x < GRIDSIZE) && (0 <= y) && (y < GRIDSIZE)){
+				if((x == i) && (y == j)){
+					continue;
+				}
+				int curNodeInHist = imageGrid[x][y].curNode;
+				neighbors.push_back(imageGrid[x][y].flowBuf[curNodeInHist]);
+			}
+		}
+	}
+	return neighbors;
+}
+
+//! Calculates the vector for the drone to move in that direction
+void OpticalFlow::FindAvoidVector(FlowNode collisionNode)
+{
+	// Find where on the image the collision was detected so we can
+	// path find
+	int i = collisionNode.i;
+	int j = collisionNode.j;
+	
+	std::vector<FlowNode> neighbors = GetNodeNeighbors(i,j);
+	
+	std::vector<FlowNode>::iterator nb_it = neighbors.begin();
+
+	FlowNode bestNode;
+	initFlowNode(bestNode, i, j);
+	while(nb_it != neighbors.end()){
+		ROS_INFO("mag: %f, ang: %f, i:%i, j:%i", nb_it->magnitude, nb_it->angle, nb_it->i, nb_it->j);
+		++nb_it;
+	}
+	
+}
+
+//! This routine checks for an immenant collision and path finds
+//! around the collision.
+void OpticalFlow::CollisionAvoidance()
+{
+	// TODO add some filtering using the flowNode buffer
+	bool noImminent = false;
+	FlowNode pqElem;
+	while(!flowPQ.empty() && !noImminent)
+	{
+		pqElem = flowPQ.top();
+		flowPQ.pop();
+		// We only care about the points coming at us
+		if(pqElem.angle > 30){
+			noImminent = true;
+		}
+		float ttc = findTTC(pqElem);
+		#ifdef D_COL_DETECT
+			ROS_INFO("TTC is: %f", ttc);
+		#endif
+		// Check if collision is imminent
+			// Set the imminent collision flag
+			//willCollide.data = true;
+			//pubCollisionDetect.publish(willCollide);
+			// Generate the vector to publish
+			FindAvoidVector(pqElem);
+		//ROS_INFO("mag: %f, ang: %f, i:%i, j:%i", pqElem.magnitude, pqElem.angle, pqElem.i, pqElem.j);
+	}
 }
 
 //! Controls the rate in which optical the algo is ran

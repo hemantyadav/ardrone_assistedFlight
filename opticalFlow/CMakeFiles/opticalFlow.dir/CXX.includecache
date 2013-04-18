@@ -33,6 +33,10 @@ std_msgs/Header.h
 /home/ardrone/ros_workspace/opticalFlow/src/opticalFlow.cpp
 ros/ros.h
 -
+geometry_msgs/Point.h
+-
+std_msgs/Bool.h
+/home/ardrone/ros_workspace/opticalFlow/src/std_msgs/Bool.h
 image_transport/image_transport.h
 -
 cv_bridge/cv_bridge.h
@@ -72,6 +76,22 @@ string
 vector
 -
 time.h
+-
+
+/opt/ros/fuerte/include/geometry_msgs/Point.h
+string
+-
+vector
+-
+map
+-
+ros/types.h
+-
+ros/serialization.h
+-
+ros/builtin_message_traits.h
+-
+ros/message_operations.h
 -
 
 /opt/ros/fuerte/include/opencv2/calib3d/calib3d.hpp
@@ -862,6 +882,22 @@ ros/message_operations.h
 stdexcept
 -
 string
+-
+
+/opt/ros/fuerte/include/std_msgs/Bool.h
+string
+-
+vector
+-
+map
+-
+ros/types.h
+-
+ros/serialization.h
+-
+ros/builtin_message_traits.h
+-
+ros/message_operations.h
 -
 
 /opt/ros/fuerte/include/std_msgs/Header.h
