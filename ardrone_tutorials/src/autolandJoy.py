@@ -40,7 +40,8 @@ ButtonLand      		= 1
 ButtonTakeoff   		= 0
 ButtonToggleAutoLand 	= 3
 ButtonToggleAvoidCollision = 5
-ButtonCalibrateColor	= 4
+ButtonCalibrateColor1	= 6
+ButtonCalibrateColor2	= 7
 
 
 # define the default mapping between joystick axes and their corresponding directions
@@ -60,6 +61,8 @@ DoAvoidCollision = False
 
 
 def updateUIText(element, update):
+	global ui
+	global MainWindow
 	global uiLock
 	
 	uiLock.acquire()
@@ -67,16 +70,20 @@ def updateUIText(element, update):
 		#~ rospy.loginfo("before")
 		element.setText(QtGui.QApplication.translate("MainWindow", update, None, QtGui.QApplication.UnicodeUTF8))
 		#~ rospy.loginfo("after")
+		time.sleep(.001)
 	finally:
 		uiLock.release()
 	
 
 def updateUIGeo(element, update):
+	global ui
+	global MainWindow
 	global uiLock
 	
 	uiLock.acquire()
 	try:			
 		element.setGeometry(update)
+		time.sleep(.001)
 	finally:
 		uiLock.release()
 		
@@ -138,9 +145,12 @@ def ReceiveJoystickMessage(data):
 			if not DoAvoidCollision or DoAvoidCollision and not collisionDetected:
 				setCommand(pitch,roll,yaw,zvel)
 	
-	if data.buttons[ButtonCalibrateColor] == 1:
+	if data.buttons[ButtonCalibrateColor1] == 1:
 		colorPub.publish(True)
 		#	rospy.loginfo("Color change")
+	if data.buttons[ButtonCalibrateColor2] == 1:
+		colorPub.publish(False)
+	
 		
 def ReceiveLandingPadPosition(position):
 	global lpadPosition
@@ -254,7 +264,7 @@ def ReceiveLandingPadPosition(position):
 			setCommand(pitch, roll, yaw, zvel)
 
 def calculateAngles(position):
-	rospy.loginfo("Hello")
+	rospy.loginfo("Anyong")
 
 def setCommand(pitch, roll, yaw, zvel):
 	controller.SetCommand(roll, pitch, yaw, zvel)
@@ -276,14 +286,14 @@ def TrimDrone():
 def ReceiveNavdata(nd):
 	global navdata
 	navdata = nd
-	try:
-		updateUIText(ui.labelNavDataAltd, "altd: %f" % (navdata.altd))
-		updateUIText(ui.labelNavDataVelocity, "vx: %04d vy: %04d vz: %04d" % (navdata.vx, navdata.vy, navdata.vz))
-		updateUIText(ui.labelNavDataAccel, "ax: %.4f ay: %.4f az: %.4f" % (navdata.ax, navdata.ay, navdata.az))
-		updateUIText(ui.labelNavDataRot, "rotX: %.4f rotY: %.4f rotZ: %.4f" % (navdata.rotX, navdata.rotY, navdata.rotZ))
-		updateUIText(ui.labelNavDataBattery, "battery: %f" % (navdata.batteryPercent))
-	except:
-		rospy.loginfo("UI Update error")
+	#~ try:
+		#~ updateUIText(ui.labelNavDataAltd, "altd: %f" % (navdata.altd))
+		#~ updateUIText(ui.labelNavDataVelocity, "vx: %04d vy: %04d vz: %04d" % (navdata.vx, navdata.vy, navdata.vz))
+		#~ updateUIText(ui.labelNavDataAccel, "ax: %.4f ay: %.4f az: %.4f" % (navdata.ax, navdata.ay, navdata.az))
+		#~ updateUIText(ui.labelNavDataRot, "rotX: %.4f rotY: %.4f rotZ: %.4f" % (navdata.rotX, navdata.rotY, navdata.rotZ))
+		#~ updateUIText(ui.labelNavDataBattery, "battery: %f" % (navdata.batteryPercent))
+	#~ except:
+		#~ rospy.loginfo("UI Update error")
 		
 	#rospy.loginfo(navdata)
 	#rospy.loginfo(nd.altd)
