@@ -15,12 +15,13 @@
 #include <math.h>
 #include <ardrone_autonomy/Navdata.h>
 
-#define GRIDSIZE 16
+#define GRIDSIZE 4
 #define NODEHISTSZ 4
 
 // Debug Defines
 //#define D_PQ_ORDER
 #define D_COL_DETECT
+//#define D_FINDAVOID
 
 // STRUCTS #############################################################
 struct FlowNode
@@ -156,7 +157,7 @@ void BuildPQ(cv::Mat image)
 			int curNodeBuf = imageGrid[i][j].curNode;
 			FlowNode pqElem = imageGrid[i][j].flowBuf[curNodeBuf];
 			// NaN presence mean there were no flow vectors, ignore
-			if(!isnan(pqElem.angle) && !isnan(pqElem.magnitude) && (pqElem.angle < 30)){
+			if(!isnan(pqElem.angle) && !isnan(pqElem.magnitude)){
 				//Display the grid averages
 				cv::rectangle(image, pqElem.start-cv::Point2f(3,3), pqElem.start+cv::Point2f(2,2), 255, 5);
 				cv::rectangle(image, pqElem.start-cv::Point2f(3,3), pqElem.start+cv::Point2f(3,3), 0,   1);
@@ -221,9 +222,9 @@ void InitImageMatrix()
 }
 
 //! Calculate 
-int findTTC(FlowNode node)
+float findTTC(FlowNode node)
 {
-	return 1/(sqrt((pow(node.end.x, 2) + pow(node.end.y,2))/(pow(node.start.x,2) + pow(node.start.y,2))) + 1);
+	return 1.0f/(sqrt((pow(node.end.x, 2.0f) + pow(node.end.y,2.0f))/(pow(node.start.x,2.0f) + pow(node.start.y,2.0f))) - 1.0f);
 }
 
 
@@ -504,10 +505,9 @@ void OpticalFlow::navdataCallback(ardrone_autonomy::Navdata const & new_navdata)
 
 std::vector<FlowNode> GetNodeNeighbors(int i, int j)
 {
-	ROS_INFO("curent node at (%i,%i)", i, j);
+	//ROS_INFO("curent node at (%i,%i)", i, j);
 	// TODO filter nodes based on history
 	std::vector<FlowNode> neighbors;
-	//neighbors.push_back(imageGrid[i][j]
 	for(int x = (i-1); x < (i+2); x++){
 		for(int y = (j-1); y < (j+2); y++){
 			// Do not add the center node
@@ -516,7 +516,9 @@ std::vector<FlowNode> GetNodeNeighbors(int i, int j)
 					continue;
 				}
 				int curNodeInHist = imageGrid[x][y].curNode;
-				neighbors.push_back(imageGrid[x][y].flowBuf[curNodeInHist]);
+				FlowNode nbr = imageGrid[x][y].flowBuf[curNodeInHist];
+				neighbors.push_back(nbr);
+				//ROS_INFO("neighbors: (%i,%i)", nbr.i, nbr.j);
 			}
 		}
 	}
@@ -535,13 +537,23 @@ void OpticalFlow::FindAvoidVector(FlowNode collisionNode)
 	
 	std::vector<FlowNode>::iterator nb_it = neighbors.begin();
 
-	FlowNode bestNode;
-	initFlowNode(bestNode, i, j);
+	FlowNode bestNode = collisionNode;
 	while(nb_it != neighbors.end()){
-		ROS_INFO("mag: %f, ang: %f, i:%i, j:%i", nb_it->magnitude, nb_it->angle, nb_it->i, nb_it->j);
+		#ifdef D_FINDAVOID
+		ROS_INFO("Candidates: mag: %f, ang: %f, i:%i, j:%i", nb_it->magnitude, nb_it->angle, nb_it->i, nb_it->j);
+		#endif
+		if((nb_it->angle > bestNode.angle) || (nb_it->magnitude < bestNode.magnitude)){
+			bestNode = *nb_it;
+		}
 		++nb_it;
 	}
-	
+	#ifdef D_FINDAVOID
+	ROS_INFO("BEST: mag: %f, ang: %f, i:%i, j:%i", bestNode.magnitude, bestNode.angle, bestNode.i, bestNode.j);
+	#endif
+	avoidanceDirection.x = bestNode.start.x;
+	avoidanceDirection.y = bestNode.start.y;
+	avoidanceDirection.z = 0.0f;
+	pubAvoidDirection.publish(avoidanceDirection);
 }
 
 //! This routine checks for an immenant collision and path finds
@@ -564,11 +576,18 @@ void OpticalFlow::CollisionAvoidance()
 			ROS_INFO("TTC is: %f", ttc);
 		#endif
 		// Check if collision is imminent
+		if((pqElem.angle < 20) && (pqElem.magnitude > 20)){
 			// Set the imminent collision flag
-			//willCollide.data = true;
-			//pubCollisionDetect.publish(willCollide);
+			willCollide.data = true;
+			pubCollisionDetect.publish(willCollide);
 			// Generate the vector to publish
 			FindAvoidVector(pqElem);
+		}
+		else
+		{
+			willCollide.data = false;
+			pubCollisionDetect.publish(willCollide);
+		}
 		//ROS_INFO("mag: %f, ang: %f, i:%i, j:%i", pqElem.magnitude, pqElem.angle, pqElem.i, pqElem.j);
 	}
 }
