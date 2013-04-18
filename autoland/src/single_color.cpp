@@ -1,19 +1,3 @@
-/*
-Tracks two landing pads
-
-Publishes coordinates to "landingPadTracker/landingPadPosition"
-
-lpad_A is denoted by (X,Y,0)
-lpad_B is denoted by (X,Y,1)
-
-To recalibrate Color A, pass TRUE to "landingPadTracker/setColorMsg"
-To recalibrate Color B, pass FALSE to "landingPadTracker/setColorMsg"
-
-Each Color requires two recalibrations.  One should be in a dark setting and one in a high setting.
-This gives a full range of the color.  Typically, recalibrating at maximum and minimum height for each 
-color will work.
-
-*/
 //Includes all the headers necessary to use the most common public pieces of the ROS system.
 #include <ros/ros.h>
 #include <ros/node_handle.h>
@@ -93,22 +77,6 @@ void recalculate_detection(int AorB){
 				detect_color_A_min.val[1], detect_color_A_max.val[1],
 				detect_color_A_min.val[2], detect_color_A_max.val[2]);
 	}
-	
-	if(AorB == 1){
-		detect_color_B_max = Scalar( max_val(detect_color_B1.val[0], detect_color_B2.val[0]),
-					max_val(detect_color_B1.val[1], detect_color_B2.val[1]),
-					max_val(detect_color_B1.val[2], detect_color_B2.val[2]));
-		detect_color_B_min = Scalar( min_val(detect_color_B1.val[0], detect_color_B2.val[0]),
-					min_val(detect_color_B1.val[1], detect_color_B2.val[1]),
-					min_val(detect_color_B1.val[2], detect_color_B2.val[2]));
-	
-		detect_color_B_max = Scalar( detect_color_B_max.val[0] * 1.2, detect_color_B_max.val[1] * 1.2, detect_color_B_max.val[2] * 1.2);
-		detect_color_B_min = Scalar( detect_color_B_min.val[0] * 0.8, detect_color_B_min.val[1] * 0.8, detect_color_B_min.val[2] * 0.8);			
-		printf("B Hue range: (%.2f :: %.2f)\nB Saturation range: (%.2f :: %.2f)\nB Value range: (%.2f :: %.2f)\n\n",  
-				detect_color_B_min.val[0], detect_color_B_max.val[0],
-				detect_color_B_min.val[1], detect_color_B_max.val[1],
-				detect_color_B_min.val[2], detect_color_B_max.val[2]);
-	}
 }
 
 
@@ -126,7 +94,6 @@ class ImageConverter
 	ros::Subscriber colorSwitch;
 	
 	geometry_msgs::Point lpad_A;
-	geometry_msgs::Point lpad_B;
 	std_msgs::Int32MultiArray frameSize;
 	
 	
@@ -155,9 +122,9 @@ class ImageConverter
 	 	 pubPosition = nh_.advertise<geometry_msgs::Point>("landingPadTracker/landingPadPosition", 5);
 	 	 frameSize.data.clear();
 	 	 
-		 lpad_B.x = lpad_A.x = 0.0f;
-		 lpad_B.y = lpad_A.y = 0.0f;
-		 lpad_B.z = lpad_A.z = 0.0f;
+		 lpad_A.x = 0.0f;
+		 lpad_A.y = 0.0f;
+		 lpad_A.z = 0.0f;
 	 	 
 	 	 
 	 	 namedWindow(WINDOW);
@@ -174,11 +141,11 @@ class ImageConverter
 	 {
 		if(msg->data){
 	 		set_A_next_frame = true;
-	 		printf("Scanning new A color!\n");
+	 		printf("Scanning new a color!\n");
 	 	}
 	 	if(!msg->data){
-	 		set_B_next_frame = true;
-	 		printf("Scanning new B color!\n");
+	 	//	set_B_next_frame = true;
+	 		printf("Received bad message\n");
 	 	
 	 	}
 	 
@@ -225,52 +192,19 @@ class ImageConverter
 			waitKey(3);
 			image_pub_.publish(cv_ptr->toImageMsg());
 		}
-		
-		if(set_B_next_frame){
-
-			Mat croppedHSV = frame_hsv(center_mat);
-			Mat croppedFrame   = frame(center_mat);
-			Scalar meanScalar, stdScalar;
-			meanStdDev(croppedHSV, meanScalar, stdScalar);
-		
-			if(onetwoB == 0){
-				detect_color_B2 = Scalar( meanScalar.val[0], meanScalar.val[1], meanScalar.val[2]);
-				meanStdDev(croppedFrame, meanScalar, stdScalar);
-				color_B2_RGB = Scalar( meanScalar.val[0], meanScalar.val[1], meanScalar.val[2]);		
-			}
-			if(onetwoB == 1){
-				detect_color_B1 = Scalar( meanScalar.val[0], meanScalar.val[1], meanScalar.val[2]);
-				meanStdDev(croppedFrame, meanScalar, stdScalar);
-				color_B1_RGB = Scalar( meanScalar.val[0], meanScalar.val[1], meanScalar.val[2]);
-			}
-			
-			onetwoB = 1 - onetwoB;
-			recalculate_detection(1);	
-
-			set_B_next_frame = false;
-			waitKey(3);
-			image_pub_.publish(cv_ptr->toImageMsg());
-		}
-		
-		
-		
-		if(!set_B_next_frame && !set_B_next_frame){
-			Scalar color = Scalar( 0,0,0 );
+				
+		else{
+			Scalar color = Scalar( 0,255,255 );
 				
 			rectangle(frame,center_mat, color, 2,8,0);
 			
 			rectangle(frame, Point(5,0), Point(12,7), color_A1_RGB , 4,8,0);
 			rectangle(frame, Point(17,0), Point(24,7), color_A2_RGB, 4,8,0);
-			
-			rectangle(frame, Point(40,0), Point(47,7), color_B1_RGB, 4,8,0);
-			rectangle(frame, Point(52,0), Point(59,7), color_B2_RGB, 4,8,0);
-			
-			inRange(frame_hsv.clone(), detect_color_A_min, detect_color_A_max, thresh_A);
-			inRange(frame_hsv.clone(), detect_color_B_min, detect_color_B_max, thresh_B);
+						
+			inRange(frame_hsv, detect_color_A_min, detect_color_A_max, thresh_A);
 			
 			findContours(thresh_A, contours_A, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE);
-			findContours(thresh_B, contours_B, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE);				
-			
+
 			Moments moment;
 			int x_mass, y_mass, x_center = frame.cols / 2, y_center = frame.rows / 2;
 			CvPoint mass_center = cvPoint(0,0), img_center = cvPoint(x_center,y_center);
@@ -285,7 +219,6 @@ class ImageConverter
 					max_area = current_area;
 					max_area_index = i;
 				}
-
 			}
 							
 			if (max_area_index > -1){
@@ -306,36 +239,7 @@ class ImageConverter
 				pubPosition.publish(lpad_A);				
 			}
 			
-			
-			
-			max_area = 0;
-			max_area_index = -1;
-			for( size_t i = 0; i< contours_B.size(); i++ )
-			{
-				current_area = contourArea(contours_B[i]);
-				if(max_area < current_area )  
-				{
-					max_area = current_area;
-					max_area_index = i;
-				}
-			}
-								
-			if (max_area_index > -1){
-				color = Scalar( 0, 255, 255 );
-				drawContours( frame, contours_B, max_area_index, color, 2, 8, vector<Vec4i>(), 0, Point() );
-				moment = moments( contours_B[max_area_index], false);
-				lpad_B.x = mass_center.x = x_mass = moment.m10 / moment.m00;
-				lpad_B.y = mass_center.y = y_mass = moment.m01 / moment.m00;
-				lpad_B.z = 1;
-				line(frame,mass_center, img_center, color, 4, 8 , 0);
-				
-				pubPosition.publish(lpad_B);
-			}
-			
-			
-			
 			imshow(WINDOW, frame);
-
 			waitKey(3);
 		
 			image_pub_.publish(cv_ptr->toImageMsg());
