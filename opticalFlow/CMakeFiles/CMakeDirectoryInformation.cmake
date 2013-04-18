@@ -17,8 +17,6 @@ SET(CMAKE_C_INCLUDE_PATH
   "/opt/ros/fuerte/stacks/image_common/image_transport/include"
   "/opt/ros/fuerte/stacks/pluginlib/include"
   "/opt/ros/fuerte/stacks/pluginlib"
-  "/home/ardrone/ros_workspace/ardrone_autonomy/msg_gen/cpp/include"
-  "/home/ardrone/ros_workspace/ardrone_autonomy/srv_gen/cpp/include"
   "/opt/ros/fuerte/stacks/geometry/tf/include"
   "/opt/ros/fuerte/stacks/geometry/tf/msg_gen/cpp/include"
   "/opt/ros/fuerte/stacks/geometry/tf/srv_gen/cpp/include"
