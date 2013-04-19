@@ -15,13 +15,16 @@
 #include <math.h>
 //#include <ardrone_autonomy/Navdata.h>
 
-#define GRIDSIZE 4
-#define NODEHISTSZ 4
+#define GRIDSIZE 32
+#define NODEHISTSZ 1
+#define X_THRES_SIZE 10
+#define Y_THRES_SIZE 5
 
 // Debug Defines
 //#define D_PQ_ORDER
-#define D_COL_DETECT
+//#define D_COL_DETECT
 //#define D_FINDAVOID
+//#define D_ANG_VAR
 
 // STRUCTS #############################################################
 struct FlowNode
@@ -30,8 +33,8 @@ struct FlowNode
 	cv::Point2f end;
 	float magnitude;
 	/*
-	 * Negative angle means the object is moving away. Positive numbers
-	 * close to 0 mean it's moving directly at us!
+	 * Positive numbers close to 0 mean it's moving directly at us!
+	 * Positive numbers <180 are moving away
 	 */ 
 	float angle;
 	int i;
@@ -48,19 +51,6 @@ struct Compare
 		if(f2.angle < f1.angle){
 			return true;
 		}
-		/*
-		// f2 is closer to 0+
-		if((f1.angle >= 0) && (f2.angle >= 0) && (f2.angle < f1.angle)){
-			return true;
-		}
-		// f2 is closer to 0-
-		if((f1.angle < 0) && (f2.angle < 0) && (f1.angle < f2.angle)){
-			return true;
-		}
-		if((f2.angle >= 0) && (f1.angle < 0)){
-			return true;
-		}
-		*/
 		return false;
 	}
 };
@@ -97,10 +87,8 @@ void AddVector(cv::Point2f start, cv::Point2f end, float magnitude, float angle)
 	assert(i <= GRIDSIZE);
 	assert(j <= GRIDSIZE);
 	
-	int curNodeBuf = imageGrid[i][j].curNode;
-	// Caculate where to store the new node
-	int nextNodeBuf = curNodeBuf % NODEHISTSZ;
-	FlowNode curNode = imageGrid[i][j].flowBuf[curNodeBuf];
+	int curNodeIdx = imageGrid[i][j].curNode;
+	FlowNode curNode = imageGrid[i][j].flowBuf[curNodeIdx];
 	
 	curNode.i = i;
 	curNode.j = j;
@@ -141,13 +129,97 @@ void AddVector(cv::Point2f start, cv::Point2f end, float magnitude, float angle)
 		curNode.angle = (curNode.angle + angle)/2;
 	}
 	
-	//update
-	if(imageGrid[i][j].histSz < NODEHISTSZ){
-		imageGrid[i][j].histSz++;
-	}
-	imageGrid[i][j].curNode = nextNodeBuf;
-	imageGrid[i][j].flowBuf[nextNodeBuf] = curNode;
+	imageGrid[i][j].flowBuf[curNodeIdx] = curNode;
 }
+
+//! Checks previous values to eliminate outliers
+float angleHistVar(NodeHist hist)
+{
+	int historySz = hist.histSz;
+	float sum1 = std::numeric_limits<float>::quiet_NaN();
+	// Calculate the mean angle value
+	for(int i = 0; i < historySz; i++){
+		float thisAng = hist.flowBuf[i].angle;
+		if(!isnan(thisAng)){
+			if(isnan(sum1)){
+				sum1 = thisAng;
+			}else{
+				sum1 = sum1 + thisAng;
+			}
+		}else{
+			historySz--;
+		}
+	}
+	// Check to see that there's enough history for good confidence
+	if(historySz <3){
+		return std::numeric_limits<float>::quiet_NaN();
+	}
+	
+	float mean = sum1/historySz;
+	float sum2 = std::numeric_limits<float>::quiet_NaN();
+	// Calculate the sum of the squares
+	for(int i = 0; i < historySz; i++){
+		float thisAng = hist.flowBuf[i].angle;
+		if(!isnan(thisAng)){
+			if(isnan(sum2)){
+				sum2 = pow((thisAng - mean), 2.0f);
+			}else{
+				sum2 = sum2 + pow((thisAng - mean), 2.0f);
+			}
+		}
+	}
+	
+	float var = sum2/(historySz - 1);
+	#ifdef D_ANG_VAR
+		ROS_INFO("AngVar: %f", var);
+	#endif
+	return var;
+}
+
+
+float magnitudeHistVar(NodeHist hist)
+{
+	int historySz = hist.histSz;
+	float sum1 = std::numeric_limits<float>::quiet_NaN();
+	// Calculate the mean angle value
+	for(int i = 0; i < historySz; i++){
+		float thisMag = hist.flowBuf[i].magnitude;
+		if(!isnan(thisMag)){
+			if(isnan(sum1)){
+				sum1 = thisMag;
+			}else{
+				sum1 = sum1 + thisMag;
+			}
+		}else{
+			historySz--;
+		}
+	}
+	// Check to see that there's enough history for good confidence
+	if(historySz <3){
+		return std::numeric_limits<float>::quiet_NaN();
+	}
+	
+	float mean = sum1/historySz;
+	float sum2 = std::numeric_limits<float>::quiet_NaN();
+	// Calculate the sum of the squares
+	for(int i = 0; i < historySz; i++){
+		float thisMag = hist.flowBuf[i].magnitude;
+		if(!isnan(thisMag)){
+			if(isnan(sum2)){
+				sum2 = pow((thisMag - mean), 2.0f);
+			}else{
+				sum2 = sum2 + pow((thisMag - mean), 2.0f);
+			}
+		}
+	}
+	
+	float var = sum2/(historySz - 1);
+	#ifdef D_ANG_VAR
+		ROS_INFO("VarMag: %f", var);
+	#endif
+	return var;
+}
+
 
 //! Pushes FlowNodes into the PQ after the matrix has been populated
 void BuildPQ(cv::Mat image)
@@ -155,43 +227,40 @@ void BuildPQ(cv::Mat image)
 	for(int i = 0; i<GRIDSIZE; i++){
 		for(int j = 0; j<GRIDSIZE; j++){
 			int curNodeBuf = imageGrid[i][j].curNode;
+			//float angVar = angleHistVar(imageGrid[i][j]);
+			float angVar = 1.0f;
 			FlowNode pqElem = imageGrid[i][j].flowBuf[curNodeBuf];
+			// Define the region of were flow ends are would be considered
+			// dangerous
+			float xMin = center.x - (vidWidth/X_THRES_SIZE);
+			float xMax = center.x + (vidWidth/X_THRES_SIZE);
+			float yMin = center.y - (vidHeight/Y_THRES_SIZE);
+			float yMax = center.y + (vidHeight/Y_THRES_SIZE);
+			
 			// NaN presence mean there were no flow vectors, ignore
 			if(!isnan(pqElem.angle) && !isnan(pqElem.magnitude)){
 				cv::Scalar lineColor;
 				int line_thickness = 2;
-				if((pqElem.angle < 20) && (pqElem.magnitude >20)){
+				// These are immenant collisions
+				if((pqElem.angle < 20) && (pqElem.magnitude >20) 
+					//&& (!isnan(angVar)) && (angVar < 10000)
+					//&& (pqElem.end.x > xMin) && (pqElem.end.x < xMax)
+					//&& (pqElem.end.y > yMin) && (pqElem.end.y < yMax)
+					)
+				{
 					lineColor = cv::Scalar(0, 0, 255);
+					flowPQ.push(imageGrid[i][j].flowBuf[curNodeBuf]);
 				}else{
 					lineColor = cv::Scalar(255, 0 , 0);
 				}
 				
 				// Now we draw the main line of the arrow.
 				cv::line(image, pqElem.start, pqElem.end, lineColor, line_thickness);
-
-				// Now draw the tips of the arrow. I do some scaling so that the
-				// tips look proportional to the main line of the arrow.
-				cv::Point2f p;
-				double angle = atan2((double) pqElem.start.y - pqElem.end.y, (double) pqElem.start.x - pqElem.end.x);
-				p.x = (int) (pqElem.end.x + 9 * cos(angle + CV_PI / 4));
-				p.y = (int) (pqElem.end.y + 9 * sin(angle + CV_PI / 4));
-				line(image, p, pqElem.end, lineColor, line_thickness);
-
-				p.x = (int) (pqElem.end.x + 9 * cos(angle - CV_PI / 4));
-				p.y = (int) (pqElem.end.y + 9 * sin(angle - CV_PI / 4));
-				line(image, p, pqElem.end, lineColor, line_thickness);
 				
-				/*
-				cv::rectangle(image, pqElem.start-cv::Point2f(3,3), pqElem.start+cv::Point2f(2,2), 255, 5);
-				cv::rectangle(image, pqElem.start-cv::Point2f(3,3), pqElem.start+cv::Point2f(3,3), lineColor,   1);
-
-				cv::rectangle(image, pqElem.end-cv::Point2f(3,3), pqElem.end+cv::Point2f(2,2), 0,   5);
-				cv::rectangle(image, pqElem.end-cv::Point2f(3,3), pqElem.end+cv::Point2f(3,3), 255, 1);
-
-				cv::line(image, pqElem.start, pqElem.end, cv::Scalar(0,0,0),   2); 
-				cv::line(image, pqElem.start, pqElem.end, lineColor, 1);
-				*/ 
-				flowPQ.push(imageGrid[i][j].flowBuf[curNodeBuf]);
+				// Draw a rectangle at the end of the vector for direction
+				cv::rectangle(image, pqElem.end-cv::Point2f(3,3), pqElem.end+cv::Point2f(2,2), lineColor,   4);
+				
+				
 			}
 		}
 	}
@@ -224,23 +293,42 @@ void initFlowNode(FlowNode &node, int i, int j)
  * i			= i (index in array)
  * j			= j (indes in array)
  */ 
-void InitImageMatrix()
+void InitImageMatrix(bool initHistBuf)
 {
 	for(int i = 0; i<GRIDSIZE; i++){
 		for(int j = 0; j<GRIDSIZE; j++){
-			//Loop those each node hist item
-			for(int k = 0; k<NODEHISTSZ; k++){
-				//clear out node varibles
-				FlowNode clearNode = imageGrid[i][j].flowBuf[k];
-				// Initialize all floats to NaN
-				
+			if(initHistBuf){
+				//Loop those each node hist item
+				for(int k = 0; k<NODEHISTSZ; k++){
+					//clear out node varibles
+					FlowNode clearNode = imageGrid[i][j].flowBuf[k];
+					// Initialize all floats to NaN
+					
+					initFlowNode(clearNode, i,j);
+					
+					// Update the node
+					imageGrid[i][j].flowBuf[k] = clearNode;
+				}
+				// Reset the starting index
+				imageGrid[i][j].curNode = 0;
+			}else{
+				int curNodeIdx = imageGrid[i][j].curNode;
+				// Caculate where to store the new node
+				int nextNodeIdx = (curNodeIdx + 1) % NODEHISTSZ;
+				// Clear the node at this location
+				FlowNode clearNode = imageGrid[i][j].flowBuf[nextNodeIdx];
 				initFlowNode(clearNode, i,j);
 				
-				// Update the node
-				imageGrid[i][j].flowBuf[k] = clearNode;
+				
+				//update number stored until max is reached
+				if(imageGrid[i][j].histSz < NODEHISTSZ){
+					imageGrid[i][j].histSz++;
+				}
+				// Update the current node index
+				imageGrid[i][j].curNode = nextNodeIdx;
 			}
-			// Reset the starting index
-			imageGrid[i][j].curNode = 0;
+			
+			
 		}
 	}
 }
@@ -345,23 +433,13 @@ std::vector<cv::Point2f> const & old_corners, std::vector<cv::Point2f> const & n
 	//Set image varibles for PQ
 
 	assert(old_corners.size() == new_corners.size());
-	InitImageMatrix();
+	InitImageMatrix(true);
 	for(size_t i=0; i<new_corners.size(); ++i)
 	{
 		float const pointDist = sqrt(pow(new_corners[i].x - old_corners[i].x, 2) + pow(new_corners[i].y - old_corners[i].y, 2));
 		float const angle = innerAngle(old_corners[i], new_corners[i]);
 		//Only track points that have a valid angle
 		if(!isnan(angle) && !isinf(angle) && (pointDist != 0)){
-			/*
-			cv::rectangle(image, old_corners[i]-cv::Point2f(3,3), old_corners[i]+cv::Point2f(2,2), 255, 5);
-			cv::rectangle(image, old_corners[i]-cv::Point2f(3,3), old_corners[i]+cv::Point2f(3,3), 0,   1);
-
-			cv::rectangle(image, new_corners[i]-cv::Point2f(3,3), new_corners[i]+cv::Point2f(2,2), 0,   5);
-			cv::rectangle(image, new_corners[i]-cv::Point2f(3,3), new_corners[i]+cv::Point2f(3,3), 255, 1);
-
-			cv::line(image, old_corners[i], new_corners[i], 0,   5); 
-			cv::line(image, old_corners[i], new_corners[i], 255, 1);
-			*/
 			AddVector(old_corners[i], new_corners[i], pointDist, angle);
 		}
 	}
@@ -504,7 +582,6 @@ void OpticalFlow::imageCallback(sensor_msgs::ImageConstPtr const & input_img_ptr
 
 		// Draw the features on the input image
 		if(key_corners_.size()){
-			// TODO use color here
 			drawFeatures(input_image_color, key_corners_, new_corners);
 			// Read the PQ and determine immenant collisions
 			CollisionAvoidance();
@@ -617,6 +694,7 @@ void OpticalFlow::CollisionAvoidance()
 int main(int argc, char ** argv)
 {
 	ros::init(argc, argv, "contrast_enhancer");
+	InitImageMatrix(true);
 	OpticalFlow ofInit;
 	ros::Rate r(25); //30hz
 	while(ros::ok()){
