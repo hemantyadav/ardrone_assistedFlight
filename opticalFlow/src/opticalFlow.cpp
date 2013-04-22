@@ -13,10 +13,10 @@
 #include <queue>
 #define _USE_MATH_DEFINES
 #include <math.h>
-//#include <ardrone_autonomy/Navdata.h>
+#include <ardrone_autonomy/Navdata.h>
 
-#define GRIDSIZE 32
-#define NODEHISTSZ 1
+#define GRIDSIZE 16
+#define NODEHISTSZ 4
 #define X_THRES_SIZE 10
 #define Y_THRES_SIZE 5
 
@@ -58,8 +58,8 @@ struct Compare
 //! Implements a circular buffer of FlowNodes to maintain history
 struct NodeHist
 {
-	int curNode; // Indicates which is the most recent node
-	int histSz;  // Stores how many of the buffers are valid
+	int curNodeIdx; // Indicates which is the most recent node
+	int curHistSz;  // Stores how many of the buffers are valid
 	FlowNode flowBuf[NODEHISTSZ];
 };
 
@@ -69,7 +69,8 @@ std::priority_queue<FlowNode, std::vector<FlowNode>, Compare> flowPQ;
 double vidWidth;
 double vidHeight;
 cv::Point2f center;
-//ardrone_autonomy::Navdata navdata;
+ardrone_autonomy::Navdata navdata;
+
 // Published data
 geometry_msgs::Point avoidanceDirection;
 std_msgs::Bool willCollide;
@@ -87,7 +88,7 @@ void AddVector(cv::Point2f start, cv::Point2f end, float magnitude, float angle)
 	assert(i <= GRIDSIZE);
 	assert(j <= GRIDSIZE);
 	
-	int curNodeIdx = imageGrid[i][j].curNode;
+	int curNodeIdx = imageGrid[i][j].curNodeIdx;
 	FlowNode curNode = imageGrid[i][j].flowBuf[curNodeIdx];
 	
 	curNode.i = i;
@@ -135,7 +136,7 @@ void AddVector(cv::Point2f start, cv::Point2f end, float magnitude, float angle)
 //! Checks previous values to eliminate outliers
 float angleHistVar(NodeHist hist)
 {
-	int historySz = hist.histSz;
+	int historySz = hist.curHistSz;
 	float sum1 = std::numeric_limits<float>::quiet_NaN();
 	// Calculate the mean angle value
 	for(int i = 0; i < historySz; i++){
@@ -179,7 +180,7 @@ float angleHistVar(NodeHist hist)
 
 float magnitudeHistVar(NodeHist hist)
 {
-	int historySz = hist.histSz;
+	int historySz = hist.curHistSz;
 	float sum1 = std::numeric_limits<float>::quiet_NaN();
 	// Calculate the mean angle value
 	for(int i = 0; i < historySz; i++){
@@ -226,10 +227,10 @@ void BuildPQ(cv::Mat image)
 {
 	for(int i = 0; i<GRIDSIZE; i++){
 		for(int j = 0; j<GRIDSIZE; j++){
-			int curNodeBuf = imageGrid[i][j].curNode;
+			int curNodeIdx = imageGrid[i][j].curNodeIdx;
 			//float angVar = angleHistVar(imageGrid[i][j]);
 			float angVar = 1.0f;
-			FlowNode pqElem = imageGrid[i][j].flowBuf[curNodeBuf];
+			FlowNode pqElem = imageGrid[i][j].flowBuf[curNodeIdx];
 			// Define the region of were flow ends are would be considered
 			// dangerous
 			float xMin = center.x - (vidWidth/X_THRES_SIZE);
@@ -248,9 +249,12 @@ void BuildPQ(cv::Mat image)
 					//&& (pqElem.end.y > yMin) && (pqElem.end.y < yMax)
 					)
 				{
+					// Dangerous, red line
 					lineColor = cv::Scalar(0, 0, 255);
-					flowPQ.push(imageGrid[i][j].flowBuf[curNodeBuf]);
+					// Add this to the queue of nodes to path find around
+					flowPQ.push(imageGrid[i][j].flowBuf[curNodeIdx]);
 				}else{
+					// Not dangerous, blue line
 					lineColor = cv::Scalar(255, 0 , 0);
 				}
 				
@@ -266,6 +270,18 @@ void BuildPQ(cv::Mat image)
 	}
 }
 
+//! Sets inital values to the image matrix
+/**
+ * Initializes each FlowNode in the matrix to:
+ * start.x 		= NaN
+ * start.y 		= NaN
+ * end.x		= NaN
+ * end.y		= NaN
+ * magnitude	= NaN
+ * angle		= NaN
+ * i			= i (index in array)
+ * j			= j (indes in array)
+ */ 
 void initFlowNode(FlowNode &node, int i, int j)
 {
 	// Initialize all floats to NaN
@@ -281,18 +297,7 @@ void initFlowNode(FlowNode &node, int i, int j)
 	node.j = j;
 }
 
-//! Sets inital values to the image matrix
-/**
- * Initializes each FlowNode in the matrix to:
- * start.x 		= NaN
- * start.y 		= NaN
- * end.x		= NaN
- * end.y		= NaN
- * magnitude	= NaN
- * angle		= NaN
- * i			= i (index in array)
- * j			= j (indes in array)
- */ 
+//! Inits current history or all history
 void InitImageMatrix(bool initHistBuf)
 {
 	for(int i = 0; i<GRIDSIZE; i++){
@@ -303,32 +308,28 @@ void InitImageMatrix(bool initHistBuf)
 					//clear out node varibles
 					FlowNode clearNode = imageGrid[i][j].flowBuf[k];
 					// Initialize all floats to NaN
-					
 					initFlowNode(clearNode, i,j);
-					
 					// Update the node
 					imageGrid[i][j].flowBuf[k] = clearNode;
 				}
 				// Reset the starting index
-				imageGrid[i][j].curNode = 0;
+				imageGrid[i][j].curNodeIdx = 0;
+				imageGrid[i][j].curHistSz = 0;
+			// Clear the next history buffer
 			}else{
-				int curNodeIdx = imageGrid[i][j].curNode;
+				int curNodeIdx = imageGrid[i][j].curNodeIdx;
 				// Caculate where to store the new node
 				int nextNodeIdx = (curNodeIdx + 1) % NODEHISTSZ;
 				// Clear the node at this location
 				FlowNode clearNode = imageGrid[i][j].flowBuf[nextNodeIdx];
 				initFlowNode(clearNode, i,j);
-				
-				
-				//update number stored until max is reached
-				if(imageGrid[i][j].histSz < NODEHISTSZ){
-					imageGrid[i][j].histSz++;
-				}
 				// Update the current node index
-				imageGrid[i][j].curNode = nextNodeIdx;
+				imageGrid[i][j].curNodeIdx = nextNodeIdx;
+				//update number stored until max is reached
+				if(imageGrid[i][j].curHistSz < NODEHISTSZ){
+					imageGrid[i][j].curHistSz++;
+				}
 			}
-			
-			
 		}
 	}
 }
@@ -385,7 +386,7 @@ class OpticalFlow
 
   protected:
     void imageCallback(sensor_msgs::ImageConstPtr const & input_img_ptr);
-    //void navdataCallback(ardrone_autonomy::Navdata const & new_navdata);
+    void navdataCallback(ardrone_autonomy::Navdata const & new_navdata);
     void CollisionAvoidance();
     void FindAvoidVector(FlowNode collisionNode);
 
@@ -393,7 +394,7 @@ class OpticalFlow
     ros::NodeHandle nh_;
     image_transport::ImageTransport it_;
     image_transport::Subscriber image_sub_;
-    //ros::Subscriber navdata_sub;
+    ros::Subscriber navdata_sub;
     ros::Publisher pubAvoidDirection;
     ros::Publisher pubCollisionDetect;
     
@@ -409,7 +410,7 @@ OpticalFlow::OpticalFlow() : it_(nh_)
 {
 	// Subscriptions/Advertisements
 	image_sub_ = it_.subscribe("/ardrone/image_raw", 1, &OpticalFlow::imageCallback, this);
-	//navdata_sub = nh_.subscribe("ardrone/navdata",  1, &OpticalFlow::navdataCallback, this);
+	navdata_sub = nh_.subscribe("ardrone/navdata",  1, &OpticalFlow::navdataCallback, this);
 	
 	//Published messages
 	pubAvoidDirection = nh_.advertise<geometry_msgs::Point>("collisionAvoid/avoidanceDirection", 5);
@@ -507,7 +508,7 @@ void mergeFeatures(std::vector<cv::Point2f> & features, std::vector<cv::Point2f>
 */
 void trackFeatures(cv::Mat key_image, cv::Mat curr_image, std::vector<cv::Point2f> & corners, std::vector<cv::Point2f> & new_corners)
 {
-	cv::Size const searchWindow(50, 50);
+	cv::Size const searchWindow(40, 40);
 
 	new_corners.resize(corners.size());
 
@@ -596,13 +597,13 @@ void OpticalFlow::imageCallback(sensor_msgs::ImageConstPtr const & input_img_ptr
 		return;
 	}
 }
-/*
+
 //! Callback for new nav data
 void OpticalFlow::navdataCallback(ardrone_autonomy::Navdata const & new_navdata)
 {
 	navdata = new_navdata;
 }
-*/ 
+ 
 
 std::vector<FlowNode> GetNodeNeighbors(int i, int j)
 {
@@ -616,7 +617,7 @@ std::vector<FlowNode> GetNodeNeighbors(int i, int j)
 				if((x == i) && (y == j)){
 					continue;
 				}
-				int curNodeInHist = imageGrid[x][y].curNode;
+				int curNodeInHist = imageGrid[x][y].curNodeIdx;
 				FlowNode nbr = imageGrid[x][y].flowBuf[curNodeInHist];
 				neighbors.push_back(nbr);
 				//ROS_INFO("neighbors: (%i,%i)", nbr.i, nbr.j);
@@ -624,6 +625,16 @@ std::vector<FlowNode> GetNodeNeighbors(int i, int j)
 		}
 	}
 	return neighbors;
+}
+
+//! Adds new FlowNodes to the open list
+/*! @param openList	The current open nodes
+ *  @param newNodes	The new nodes discovered to add to openList
+ * 
+ */ 
+void addToOpenList(std::vector<FlowNode> & openList, std::vector<FlowNode> & newNodes)
+{
+	openList.insert(openList.end(), newNodes.begin(), newNodes.end());
 }
 
 //! Calculates the vector for the drone to move in that direction
@@ -635,18 +646,20 @@ void OpticalFlow::FindAvoidVector(FlowNode collisionNode)
 	int j = collisionNode.j;
 	
 	std::vector<FlowNode> neighbors = GetNodeNeighbors(i,j);
+	std::vector<FlowNode> openList;
+	addToOpenList(openList, neighbors);
 	
-	std::vector<FlowNode>::iterator nb_it = neighbors.begin();
+	std::vector<FlowNode>::iterator open_it = openList.begin();
 
 	FlowNode bestNode = collisionNode;
-	while(nb_it != neighbors.end()){
+	while(open_it != openList.end()){
 		#ifdef D_FINDAVOID
-		ROS_INFO("Candidates: mag: %f, ang: %f, i:%i, j:%i", nb_it->magnitude, nb_it->angle, nb_it->i, nb_it->j);
+		ROS_INFO("Candidates: mag: %f, ang: %f, i:%i, j:%i", open_it->magnitude, open_it->angle, open_it->i, open_it->j);
 		#endif
-		if((nb_it->angle > bestNode.angle) || (nb_it->magnitude < bestNode.magnitude)){
-			bestNode = *nb_it;
+		if((open_it->angle > bestNode.angle) || (open_it->magnitude < bestNode.magnitude)){
+			bestNode = *open_it;
 		}
-		++nb_it;
+		++open_it;
 	}
 	#ifdef D_FINDAVOID
 	ROS_INFO("BEST: mag: %f, ang: %f, i:%i, j:%i", bestNode.magnitude, bestNode.angle, bestNode.i, bestNode.j);
