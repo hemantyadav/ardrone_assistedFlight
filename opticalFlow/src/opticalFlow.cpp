@@ -15,16 +15,20 @@
 #include <math.h>
 #include <ardrone_autonomy/Navdata.h>
 
-#define GRIDSIZE 16
-#define NODEHISTSZ 4
+#define GRIDSIZE 64
+#define NODEHISTSZ 1
 #define X_THRES_SIZE 10
 #define Y_THRES_SIZE 5
+
+//#define USE_ISMOVING
 
 // Debug Defines
 //#define D_PQ_ORDER
 //#define D_COL_DETECT
 //#define D_FINDAVOID
-//#define D_ANG_VAR
+//#define D_VECTOR_VAR
+//#define D_NAVDATA_MOVING
+//#define D_AVOIDVECTOR
 
 // STRUCTS #############################################################
 struct FlowNode
@@ -68,6 +72,8 @@ NodeHist 	imageGrid[GRIDSIZE][GRIDSIZE];
 std::priority_queue<FlowNode, std::vector<FlowNode>, Compare> flowPQ;
 double vidWidth;
 double vidHeight;
+double cellWidth;
+double cellHeight;
 cv::Point2f center;
 ardrone_autonomy::Navdata navdata;
 
@@ -137,30 +143,51 @@ void AddVector(cv::Point2f start, cv::Point2f end, float magnitude, float angle)
 float angleHistVar(NodeHist hist)
 {
 	int historySz = hist.curHistSz;
+	int curNodeIdx = hist.curNodeIdx;
 	float sum1 = std::numeric_limits<float>::quiet_NaN();
-	// Calculate the mean angle value
-	for(int i = 0; i < historySz; i++){
-		float thisAng = hist.flowBuf[i].angle;
+	/*
+	 * Calculate the Mean angle from the history.
+	 * Start at the current node and examine history going backwards.
+	 */ 
+	bool histDone = false;
+	int numLoops = 0;
+	int idx = curNodeIdx;
+	while(!histDone){
+		if(numLoops == historySz){
+			histDone = true;
+			break;
+		}
+		float thisAng = hist.flowBuf[idx].angle;
 		if(!isnan(thisAng)){
 			if(isnan(sum1)){
 				sum1 = thisAng;
 			}else{
 				sum1 = sum1 + thisAng;
 			}
-		}else{
-			historySz--;
 		}
-	}
-	// Check to see that there's enough history for good confidence
-	if(historySz <3){
-		return std::numeric_limits<float>::quiet_NaN();
+		idx--;
+		if((idx < 0) && (historySz == NODEHISTSZ)){
+			idx = historySz - 1;
+		}
+		else{
+			histDone = true;
+			break;
+		}
+		numLoops++;
 	}
 	
 	float mean = sum1/historySz;
 	float sum2 = std::numeric_limits<float>::quiet_NaN();
 	// Calculate the sum of the squares
-	for(int i = 0; i < historySz; i++){
-		float thisAng = hist.flowBuf[i].angle;
+	histDone = false;
+	numLoops = 0;
+	idx = curNodeIdx;
+	while(!histDone){
+		if(numLoops == historySz){
+			histDone = true;
+			break;
+		}
+		float thisAng = hist.flowBuf[idx].angle;
 		if(!isnan(thisAng)){
 			if(isnan(sum2)){
 				sum2 = pow((thisAng - mean), 2.0f);
@@ -168,12 +195,18 @@ float angleHistVar(NodeHist hist)
 				sum2 = sum2 + pow((thisAng - mean), 2.0f);
 			}
 		}
+		idx--;
+		if((idx < 0) && (historySz == NODEHISTSZ)){
+			idx = historySz - 1;
+		}
+		else{
+			histDone = true;
+			break;
+		}
+		numLoops++;
 	}
 	
 	float var = sum2/(historySz - 1);
-	#ifdef D_ANG_VAR
-		ROS_INFO("AngVar: %f", var);
-	#endif
 	return var;
 }
 
@@ -195,10 +228,6 @@ float magnitudeHistVar(NodeHist hist)
 			historySz--;
 		}
 	}
-	// Check to see that there's enough history for good confidence
-	if(historySz <3){
-		return std::numeric_limits<float>::quiet_NaN();
-	}
 	
 	float mean = sum1/historySz;
 	float sum2 = std::numeric_limits<float>::quiet_NaN();
@@ -215,10 +244,23 @@ float magnitudeHistVar(NodeHist hist)
 	}
 	
 	float var = sum2/(historySz - 1);
-	#ifdef D_ANG_VAR
-		ROS_INFO("VarMag: %f", var);
-	#endif
 	return var;
+}
+
+bool potentialCollision(FlowNode thisNode){
+	// Define the region of were flow ends are would be considered
+	// dangerous
+	//ROS_INFO("mag: %f, ang: %f, i:%i, j:%i", thisNode.magnitude, thisNode.angle, thisNode.i, thisNode.j);
+	float xMin = center.x - (vidWidth/X_THRES_SIZE);
+	float xMax = center.x + (vidWidth/X_THRES_SIZE);
+	float yMin = center.y - (vidHeight/Y_THRES_SIZE);
+	float yMax = center.y + (vidHeight/Y_THRES_SIZE);
+	if((thisNode.angle < 15) && (thisNode.magnitude >15) && (thisNode.end.x > xMin) && (thisNode.end.x < xMax)&& (thisNode.end.y > yMin) && (thisNode.end.y < yMax))
+	{
+		return true;
+	}else{
+		return false;
+	}
 }
 
 
@@ -228,27 +270,16 @@ void BuildPQ(cv::Mat image)
 	for(int i = 0; i<GRIDSIZE; i++){
 		for(int j = 0; j<GRIDSIZE; j++){
 			int curNodeIdx = imageGrid[i][j].curNodeIdx;
-			//float angVar = angleHistVar(imageGrid[i][j]);
-			float angVar = 1.0f;
+			
+			
 			FlowNode pqElem = imageGrid[i][j].flowBuf[curNodeIdx];
-			// Define the region of were flow ends are would be considered
-			// dangerous
-			float xMin = center.x - (vidWidth/X_THRES_SIZE);
-			float xMax = center.x + (vidWidth/X_THRES_SIZE);
-			float yMin = center.y - (vidHeight/Y_THRES_SIZE);
-			float yMax = center.y + (vidHeight/Y_THRES_SIZE);
 			
 			// NaN presence mean there were no flow vectors, ignore
 			if(!isnan(pqElem.angle) && !isnan(pqElem.magnitude)){
 				cv::Scalar lineColor;
 				int line_thickness = 2;
 				// These are immenant collisions
-				if((pqElem.angle < 20) && (pqElem.magnitude >20) 
-					//&& (!isnan(angVar)) && (angVar < 10000)
-					//&& (pqElem.end.x > xMin) && (pqElem.end.x < xMax)
-					//&& (pqElem.end.y > yMin) && (pqElem.end.y < yMax)
-					)
-				{
+				if(potentialCollision(pqElem) == true){
 					// Dangerous, red line
 					lineColor = cv::Scalar(0, 0, 255);
 					// Add this to the queue of nodes to path find around
@@ -562,8 +593,11 @@ void OpticalFlow::imageCallback(sensor_msgs::ImageConstPtr const & input_img_ptr
 		cv::Mat input_image_color = cv_ptr_color->image;
 		
 		//Set the video params
+		
 		vidWidth = input_image_gray.cols;
 		vidHeight = input_image_gray.rows;
+		cellWidth = vidWidth/GRIDSIZE;
+		cellHeight = vidHeight/GRIDSIZE;
 		center.x = input_image_gray.cols/2.0f;
 		center.y = input_image_gray.rows/2.0f;
 
@@ -620,7 +654,6 @@ std::vector<FlowNode> GetNodeNeighbors(int i, int j)
 				int curNodeInHist = imageGrid[x][y].curNodeIdx;
 				FlowNode nbr = imageGrid[x][y].flowBuf[curNodeInHist];
 				neighbors.push_back(nbr);
-				//ROS_INFO("neighbors: (%i,%i)", nbr.i, nbr.j);
 			}
 		}
 	}
@@ -648,46 +681,80 @@ void OpticalFlow::FindAvoidVector(FlowNode collisionNode)
 	std::vector<FlowNode> neighbors = GetNodeNeighbors(i,j);
 	std::vector<FlowNode> openList;
 	addToOpenList(openList, neighbors);
-	
 	std::vector<FlowNode>::iterator open_it = openList.begin();
 
 	FlowNode bestNode = collisionNode;
+	#ifdef D_FINDAVOID
+		ROS_INFO("CollisionNode:  mag: %f, ang: %f, i:%i, j:%i", collisionNode.magnitude, collisionNode.angle, collisionNode.i, collisionNode.j);
+	#endif
 	while(open_it != openList.end()){
 		#ifdef D_FINDAVOID
-		ROS_INFO("Candidates: mag: %f, ang: %f, i:%i, j:%i", open_it->magnitude, open_it->angle, open_it->i, open_it->j);
+			ROS_INFO("Candidates: mag: %f, ang: %f, i:%i, j:%i", open_it->magnitude, open_it->angle, open_it->i, open_it->j);
 		#endif
+		// NaN means there is no flow so this is a good region
+		if((isnan(open_it->angle)) || (isnan(open_it->magnitude))){
+			bestNode = *open_it;
+			break;
+		}
 		if((open_it->angle > bestNode.angle) || (open_it->magnitude < bestNode.magnitude)){
 			bestNode = *open_it;
 		}
 		++open_it;
 	}
 	#ifdef D_FINDAVOID
-	ROS_INFO("BEST: mag: %f, ang: %f, i:%i, j:%i", bestNode.magnitude, bestNode.angle, bestNode.i, bestNode.j);
+		ROS_INFO("BEST: mag: %f, ang: %f, i:%i, j:%i", bestNode.magnitude, bestNode.angle, bestNode.i, bestNode.j);
 	#endif
-	avoidanceDirection.x = bestNode.start.x;
-	avoidanceDirection.y = bestNode.start.y;
+	if((bestNode.i == collisionNode.i) && (bestNode.j == collisionNode.j)){
+		ROS_WARN("BEST NODE WAS THE CURRENT NODE!");
+		return;
+	}
+	float moveX;
+	float moveY;
+	float cellXPos = bestNode.i * cellWidth;
+	float cellYPos = bestNode.j * cellHeight;
+	moveX = ((vidWidth/2.0f)-cellXPos)/(vidWidth/2.0f);
+	moveY = ((vidHeight/2.0f)-cellYPos)/(vidHeight/2.0f);
+	#ifdef D_AVOIDVECTOR
+		ROS_INFO("movX: %f, movY: %f", moveX, moveY);
+	#endif
+	avoidanceDirection.x = moveX;
+	avoidanceDirection.y = moveY;
 	avoidanceDirection.z = 0.0f;
 	pubAvoidDirection.publish(avoidanceDirection);
+		
+}
+
+//! If the drone is moving then do collision avoidance
+bool isMoving(){
+	#ifdef D_NAVDATA_MOVING
+		ROS_INFO("vx: %f,vy: %f, vz: %f", navdata.vx, navdata.vy, navdata.vz);
+	#endif
+	if(navdata.vx < 100){
+		return false;
+	}else{
+		return true;
+	}
 }
 
 //! This routine checks for an immenant collision and path finds
 //! around the collision.
 void OpticalFlow::CollisionAvoidance()
 {
+	#ifdef USE_ISMOVING
+	if(!isMoving()){
+		return;
+	}
+	#endif
 	// TODO add some filtering using the flowNode buffer
 	bool noImminent = false;
 	FlowNode pqElem;
-	while(!flowPQ.empty() && !noImminent)
+	while(!flowPQ.empty())
 	{
 		pqElem = flowPQ.top();
 		flowPQ.pop();
-		// We only care about the points coming at us
-		if(pqElem.angle > 30){
-			noImminent = true;
-		}
 		
 		// Check if collision is imminent
-		if((pqElem.angle < 20) && (pqElem.magnitude > 20)){
+		if(potentialCollision(pqElem)){
 			// Set the imminent collision flag
 			willCollide.data = true;
 			pubCollisionDetect.publish(willCollide);
