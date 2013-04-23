@@ -2,5 +2,5 @@
 	<!-- Launches the autoland controller -->
 	<node name="autoland_controller" pkg="ardrone_tutorials" type="autolandJoy.py" required="true" output="screen"/>
 	
-	<node name="padtracker" pkg="autoland" type="autoland"/>
+	<node name="padtracker" pkg="autoland" type="autoland" output="screen"/>
 </launch>

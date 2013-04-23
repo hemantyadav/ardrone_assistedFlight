@@ -65,14 +65,16 @@ def updateUIText(element, update):
 	global MainWindow
 	global uiLock
 	
-	uiLock.acquire()
-	try:			
+	noOp = True
+	
+	#~ uiLock.acquire()
+	#~ try:			
 		#~ rospy.loginfo("before")
-		element.setText(QtGui.QApplication.translate("MainWindow", update, None, QtGui.QApplication.UnicodeUTF8))
+		#~ element.setText(QtGui.QApplication.translate("MainWindow", update, None, QtGui.QApplication.UnicodeUTF8))
 		#~ rospy.loginfo("after")
-		time.sleep(.001)
-	finally:
-		uiLock.release()
+		#~ time.sleep(.001)
+	#~ finally:
+		#~ uiLock.release()
 	
 
 def updateUIGeo(element, update):
@@ -80,12 +82,14 @@ def updateUIGeo(element, update):
 	global MainWindow
 	global uiLock
 	
-	uiLock.acquire()
-	try:			
-		element.setGeometry(update)
-		time.sleep(.001)
-	finally:
-		uiLock.release()
+	noOp = True
+	
+	#~ uiLock.acquire()
+	#~ try:			
+		#~ element.setGeometry(update)
+		#~ time.sleep(.001)
+	#~ finally:
+		#~ uiLock.release()
 		
 
 # handles the reception of joystick packets
@@ -209,8 +213,8 @@ def ReceiveLandingPadPosition(position):
 		veldrone = math.hypot(navdata.vx, navdata.vy)
 		
 		if navdata.altd > 800:
-			pitch = math.copysign(-0.0240719*p+1.39116*pow(p,2)-0.54625*pow(p,3),pitch)/15.0*navdata.altd/1000.0
-			roll = math.copysign(-0.0240719*r+1.39116*pow(r,2)-0.54625*pow(r,3),roll)/15.0*navdata.altd/1000.0
+			pitch = math.copysign(-0.0240719*p+1.39116*pow(p,2)-0.54625*pow(p,3),pitch)/15.0*navdata.altd/2000.0
+			roll = math.copysign(-0.0240719*r+1.39116*pow(r,2)-0.54625*pow(r,3),roll)/15.0*navdata.altd/2000.0
 		else:
 			pitch = math.copysign(-0.0240719*p+1.39116*pow(p,2)-0.54625*pow(p,3),pitch)/15.0*navdata.altd/3000.0
 			roll = math.copysign(-0.0240719*r+1.39116*pow(r,2)-0.54625*pow(r,3),roll)/15.0*navdata.altd/3000.0
@@ -264,7 +268,8 @@ def ReceiveLandingPadPosition(position):
 			setCommand(pitch, roll, yaw, zvel)
 
 def calculateAngles(position):
-	rospy.loginfo("Anyong")
+	#~ rospy.loginfo("Anyong")
+	noOp = True
 
 def setCommand(pitch, roll, yaw, zvel):
 	controller.SetCommand(roll, pitch, yaw, zvel)
@@ -356,7 +361,7 @@ if __name__=='__main__':
 	landingCondMet = False
 
 	# display camera view
-	display.show()
+	#~ display.show()
 	
 	# display main window
 	ui = Ui_MainWindow()
