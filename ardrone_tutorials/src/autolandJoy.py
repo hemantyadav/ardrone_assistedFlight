@@ -26,6 +26,7 @@ import time
 
 # We need to use resource locking to handle synchronization between GUI thread and ROS topic callbacks
 from threading import Lock
+import threading
 
 # Import the joystick message
 from sensor_msgs.msg import Joy
@@ -57,6 +58,11 @@ ScaleYaw        = 1.0
 ScaleZ          = 1.0
 
 DoAutoLand = False
+ALPitch = 0.0
+ALRoll = 0.0
+ALYaw = 0.0
+ALZvel = 0.0
+
 DoAvoidCollision = False
 
 
@@ -67,14 +73,12 @@ def updateUIText(element, update):
 	
 	noOp = True
 	
-	#~ uiLock.acquire()
-	#~ try:			
-		#~ rospy.loginfo("before")
-		#~ element.setText(QtGui.QApplication.translate("MainWindow", update, None, QtGui.QApplication.UnicodeUTF8))
-		#~ rospy.loginfo("after")
-		#~ time.sleep(.001)
-	#~ finally:
-		#~ uiLock.release()
+	uiLock.acquire()
+	try:			
+		element.setText(QtGui.QApplication.translate("MainWindow", update, None, QtGui.QApplication.UnicodeUTF8))
+		time.sleep(.001)
+	finally:
+		uiLock.release()
 	
 
 def updateUIGeo(element, update):
@@ -209,31 +213,31 @@ def ReceiveLandingPadPosition(position):
 		p = abs(pitch)
 		r = abs(roll)
 		yaw = 0
-		zvel = -0.2
+		zvel = -0.3
 		veldrone = math.hypot(navdata.vx, navdata.vy)
 		
 		if navdata.altd > 800:
-			pitch = math.copysign(-0.0240719*p+1.39116*pow(p,2)-0.54625*pow(p,3),pitch)/15.0*navdata.altd/2000.0
-			roll = math.copysign(-0.0240719*r+1.39116*pow(r,2)-0.54625*pow(r,3),roll)/15.0*navdata.altd/2000.0
+			pitch = math.copysign(-0.0240719*p+1.39116*pow(p,2)-0.54625*pow(p,3),pitch)/15.0*navdata.altd/100.0
+			roll = math.copysign(-0.0240719*r+1.39116*pow(r,2)-0.54625*pow(r,3),roll)/15.0*navdata.altd/100.0
 		else:
-			pitch = math.copysign(-0.0240719*p+1.39116*pow(p,2)-0.54625*pow(p,3),pitch)/15.0*navdata.altd/3000.0
-			roll = math.copysign(-0.0240719*r+1.39116*pow(r,2)-0.54625*pow(r,3),roll)/15.0*navdata.altd/3000.0
+			pitch = math.copysign(-0.0240719*p+1.39116*pow(p,2)-0.54625*pow(p,3),pitch)/15.0*navdata.altd/200.0
+			roll = math.copysign(-0.0240719*r+1.39116*pow(r,2)-0.54625*pow(r,3),roll)/15.0*navdata.altd/200.0
 			
 		# Sanity check on control signals
-		if abs(pitch) > 5 or abs(roll) > 5:
-			rospy.loginfo("pitch: %f, roll: %f, p: %f, r: %f, navdata.altd: %f, vpx %f, vpy %f", pitch, roll, p, r, navdata.altd, vpx, vpy)
-			rospy.loginfo("Land")
-			hasExecutedLand = True
-			controller.SendLand()
-			return
+		#~ if abs(pitch) > 5 or abs(roll) > 5:
+			#~ rospy.loginfo("pitch: %f, roll: %f, p: %f, r: %f, navdata.altd: %f, vpx %f, vpy %f", pitch, roll, p, r, navdata.altd, vpx, vpy)
+			#~ rospy.loginfo("Land")
+			#~ hasExecutedLand = True
+			#~ controller.SendLand()
+			#~ return
 		
 		if not landingCondMet:
 			t0 = time.time()
-		acceptableVelDrone = 100/(navdata.altd/1000.0)
-		acceptableOffset = 75/(navdata.altd/1000.0)
+		acceptableVelDrone = 50/(navdata.altd/1000.0)
+		acceptableOffset = 50/(navdata.altd/1000.0)
 		if acceptableOffset < 50:
 			acceptableOffset = 50
-		rospy.loginfo("ALTD: %f    Veldrone: %f    AVD: %f    OffsetMag: %f    AOM: %f", navdata.altd, veldrone, acceptableVelDrone, offsetmag, acceptableOffset)
+		#~ rospy.loginfo("ALTD: %f    Veldrone: %f    AVD: %f    OffsetMag: %f    AOM: %f", navdata.altd, veldrone, acceptableVelDrone, offsetmag, acceptableOffset)
 		updateUIText(ui.labelLandCondVals, "ALTD: %.4f    Veldrone: %.4f    AVD: %.4f    OffsetMag: %.4f    AOM: %.4f" % (navdata.altd, veldrone, acceptableVelDrone, offsetmag, acceptableOffset))
 		
 		if veldrone < acceptableVelDrone and offsetmag < acceptableOffset:
@@ -243,9 +247,9 @@ def ReceiveLandingPadPosition(position):
 			updateUIText(ui.labelLandCond, "Landing Conditions: Met")
 			
 			landingCondMet = True
-			zvel = -0.8 * navdata.altd / 1000 * (navdata.altd > 500)
-			setCommand(roll, pitch, yaw, zvel)
-			if (time.time() - t0) > 3*navdata.altd/1000 and navdata.altd < 1000 or navdata.altd < 600:
+			zvel = -0.6 * navdata.altd / 1000 * (navdata.altd > 600)
+			setAutoLand(roll, pitch, yaw, zvel)
+			if (time.time() - t0) > 1.25*navdata.altd/1000 and navdata.altd < 750:
 				rospy.loginfo("Land")
 				hasExecutedLand = True
 				controller.SendLand()
@@ -263,9 +267,41 @@ def ReceiveLandingPadPosition(position):
 			else: 
 				updateUIText(ui.labelAcceptableOffset, "Acceptable Offset: Yes")
 			landingCondMet = False
-			zvel = -0.2 * (navdata.altd > 900)
-			rospy.loginfo("!!!!! Automatically moving drone! roll: %f    pitch: %f    yaw: %f    z: %f    vpx: %f    vpy: %f", roll, pitch, yaw, zvel, vpx, vpy)
-			setCommand(pitch, roll, yaw, zvel)
+			zvel = -0.3 * (navdata.altd > 500)
+			#~ rospy.loginfo("!!!!! Automatically moving drone! roll: %f    pitch: %f    yaw: %f    z: %f    vpx: %f    vpy: %f", roll, pitch, yaw, zvel, vpx, vpy)
+			setAutoLand(pitch, roll, yaw, zvel)
+
+def setAutoLand(pitch, roll, yaw, zvel):	
+	global ALPitch
+	global ALRoll
+	global ALYaw
+	global ALZvel
+
+	ALPitch = pitch
+	ALRoll = roll
+	ALYaw = yaw
+	ALZvel = zvel
+	
+	
+def autoLand():
+	global ALPitch
+	global ALRoll
+	global ALYaw
+	global ALZvel
+	
+	while True:
+		#~ rospy.loginfo("AL Thread Loop")
+		if DoAutoLand:
+			rospy.loginfo("!!!!! Automatically moving drone! roll: %f    pitch: %f    yaw: %f    z: %f", ALPitch, ALRoll, ALYaw, ALZvel)
+			setCommand(ALPitch, ALRoll, ALYaw, ALZvel)
+			time.sleep(0.25)
+			setCommand(0,0,0,0)
+			time.sleep(0.15)
+			setCommand(0,0,0,ALZvel*1.5)
+			time.sleep(0.2)
+			if not landingCondMet:
+				setCommand(0,0,0,0)
+		time.sleep(0.1)
 
 def calculateAngles(position):
 	#~ rospy.loginfo("Anyong")
@@ -349,6 +385,11 @@ if __name__=='__main__':
 	# subscribe to the /joy topic and handle messages of type Joy with the function ReceiveJoystickMessage
 	subJoystick = rospy.Subscriber('/joy', Joy, ReceiveJoystickMessage)
 	pitch = 0
+	
+    # start autoLand thread
+	alThread = threading.Thread(target=autoLand)
+	alThread.setDaemon(True)
+	alThread.start()
 
 	# variables to hold landing pad data
 	lpadPosition = None
@@ -361,7 +402,7 @@ if __name__=='__main__':
 	landingCondMet = False
 
 	# display camera view
-	#~ display.show()
+	display.show()
 	
 	# display main window
 	ui = Ui_MainWindow()
