@@ -15,10 +15,12 @@
 #include <math.h>
 #include <ardrone_autonomy/Navdata.h>
 
-#define GRIDSIZE 64
+#define GRIDSIZE 16
 #define NODEHISTSZ 1
-#define X_THRES_SIZE 10
+#define X_THRES_SIZE 3
 #define Y_THRES_SIZE 5
+// How many nearby collisions are needed to actually trigger avoidance
+#define COL_FLTR_THRES 2
 
 //#define USE_ISMOVING
 
@@ -29,6 +31,7 @@
 //#define D_VECTOR_VAR
 //#define D_NAVDATA_MOVING
 //#define D_AVOIDVECTOR
+#define D_FLTR_COL
 
 // STRUCTS #############################################################
 struct FlowNode
@@ -69,11 +72,24 @@ struct NodeHist
 
 // GLOBALS #############################################################
 NodeHist 	imageGrid[GRIDSIZE][GRIDSIZE];
+
 std::priority_queue<FlowNode, std::vector<FlowNode>, Compare> flowPQ;
+cv::Point2f GblStart;
+cv::Point2f GblEnd;
+
 double vidWidth;
 double vidHeight;
 double cellWidth;
 double cellHeight;
+
+float xMin;
+float xMax;
+float yMin;
+float yMax;
+
+int SpinRate;
+int SpinCount;
+
 cv::Point2f center;
 ardrone_autonomy::Navdata navdata;
 
@@ -99,6 +115,31 @@ void AddVector(cv::Point2f start, cv::Point2f end, float magnitude, float angle)
 	
 	curNode.i = i;
 	curNode.j = j;
+	
+	/*
+	 * Calculate the global flow vector
+	 */ 
+	 if(isnan(GblStart.x)){
+		 GblStart.x = start.x;
+	 }else{
+		 GblStart.x = (GblStart.x + start.x)/2;
+	 }
+	 if(isnan(GblStart.y)){
+		 GblStart.y = start.y;
+	 }else{
+		 GblStart.y = (GblStart.y + start.y)/2;
+	 }
+	 
+	 if(isnan(GblEnd.x)){
+		 GblEnd.x = end.x;
+	 }else{
+		 GblEnd.x = (GblEnd.x + end.x)/2;
+	 }
+	 if(isnan(GblEnd.y)){
+		 GblEnd.y = end.y;
+	 }else{
+		 GblEnd.y = (GblEnd.y + end.y)/2;
+	 }
 	
 	/*
 	 * Calculate the average vector (start and end points), magnitude
@@ -247,15 +288,16 @@ float magnitudeHistVar(NodeHist hist)
 	return var;
 }
 
+//! Checks to see if this node could be a collision
 bool potentialCollision(FlowNode thisNode){
 	// Define the region of were flow ends are would be considered
 	// dangerous
 	//ROS_INFO("mag: %f, ang: %f, i:%i, j:%i", thisNode.magnitude, thisNode.angle, thisNode.i, thisNode.j);
-	float xMin = center.x - (vidWidth/X_THRES_SIZE);
-	float xMax = center.x + (vidWidth/X_THRES_SIZE);
-	float yMin = center.y - (vidHeight/Y_THRES_SIZE);
-	float yMax = center.y + (vidHeight/Y_THRES_SIZE);
-	if((thisNode.angle < 15) && (thisNode.magnitude >15) && (thisNode.end.x > xMin) && (thisNode.end.x < xMax)&& (thisNode.end.y > yMin) && (thisNode.end.y < yMax))
+	if((thisNode.angle < 20) && (thisNode.magnitude >10) 
+		&& (thisNode.end.x > xMin) && (thisNode.end.x < xMax)
+		&& (thisNode.end.y > yMin) && (thisNode.end.y < yMax)
+		&& (thisNode.start.x > xMin) && (thisNode.start.x < xMax)
+		&& (thisNode.start.y > yMin) && (thisNode.start.y < yMax))
 	{
 		return true;
 	}else{
@@ -263,21 +305,44 @@ bool potentialCollision(FlowNode thisNode){
 	}
 }
 
-
 //! Pushes FlowNodes into the PQ after the matrix has been populated
 void BuildPQ(cv::Mat image)
 {
+	// Remove any currently existing items
+	while(!flowPQ.empty()){
+		flowPQ.pop();
+	}
+	cv::Point2f topLeft;
+	cv::Point2f botRight;
+	topLeft.x = xMin; topLeft.y=yMin;
+	botRight.x = xMax; botRight.y = yMax;
+	cv::rectangle(image, topLeft, botRight, CV_RGB(0,255,0),5,8);
 	for(int i = 0; i<GRIDSIZE; i++){
 		for(int j = 0; j<GRIDSIZE; j++){
 			int curNodeIdx = imageGrid[i][j].curNodeIdx;
-			
-			
 			FlowNode pqElem = imageGrid[i][j].flowBuf[curNodeIdx];
-			
 			// NaN presence mean there were no flow vectors, ignore
 			if(!isnan(pqElem.angle) && !isnan(pqElem.magnitude)){
 				cv::Scalar lineColor;
 				int line_thickness = 2;
+				/*
+				 * Compensate for the global flow vector
+				 
+				pqElem.end.x = pqElem.end.x - GblEnd.x;
+				pqElem.end.y = pqElem.end.y - GblEnd.y;
+				if(pqElem.end.x < 0){
+					pqElem.end.x = 0.0f;
+				}
+				if(pqElem.end.x > vidWidth){
+					pqElem.end.x = vidWidth;
+				}
+				if(pqElem.end.y < 0){
+					pqElem.end.y = 0.0f;
+				}
+				if(pqElem.end.y > vidHeight){
+					pqElem.end.y = vidHeight;
+				}
+				* */ 
 				// These are immenant collisions
 				if(potentialCollision(pqElem) == true){
 					// Dangerous, red line
@@ -420,7 +485,7 @@ class OpticalFlow
     void navdataCallback(ardrone_autonomy::Navdata const & new_navdata);
     void CollisionAvoidance();
     void FindAvoidVector(FlowNode collisionNode);
-
+	bool stopAvoidanceTimer();
   private:
     ros::NodeHandle nh_;
     image_transport::ImageTransport it_;
@@ -440,7 +505,7 @@ class OpticalFlow
 OpticalFlow::OpticalFlow() : it_(nh_)
 {
 	// Subscriptions/Advertisements
-	image_sub_ = it_.subscribe("/ardrone/image_raw", 1, &OpticalFlow::imageCallback, this);
+	image_sub_ = it_.subscribe("ardrone/front/image_raw", 1, &OpticalFlow::imageCallback, this);
 	navdata_sub = nh_.subscribe("ardrone/navdata",  1, &OpticalFlow::navdataCallback, this);
 	
 	//Published messages
@@ -449,6 +514,10 @@ OpticalFlow::OpticalFlow() : it_(nh_)
 	
 	nh_.param("num_keypoints", num_keypoints_param_, 500);
 	nh_.param("matchscore_thresh", matchscore_thresh_param_, 10e8);
+	// Clear the willCollide flag upon each loop
+	pubCollisionDetect.publish(willCollide);
+	
+
 }
 
 OpticalFlow::~OpticalFlow() 
@@ -600,6 +669,11 @@ void OpticalFlow::imageCallback(sensor_msgs::ImageConstPtr const & input_img_ptr
 		cellHeight = vidHeight/GRIDSIZE;
 		center.x = input_image_gray.cols/2.0f;
 		center.y = input_image_gray.rows/2.0f;
+		
+		xMin = center.x - (vidWidth/X_THRES_SIZE);
+		xMax = center.x + (vidWidth/X_THRES_SIZE);
+		yMin = center.y - (vidHeight/Y_THRES_SIZE);
+		yMax = center.y + (vidHeight/Y_THRES_SIZE);
 
 		// Grab a new keyframe whenever we have lost more than 1/2 of our tracks
 		std::vector<cv::Point2f> new_features;
@@ -678,6 +752,8 @@ void OpticalFlow::FindAvoidVector(FlowNode collisionNode)
 	int i = collisionNode.i;
 	int j = collisionNode.j;
 	
+	int numNbrCollisions = 0;
+	
 	std::vector<FlowNode> neighbors = GetNodeNeighbors(i,j);
 	std::vector<FlowNode> openList;
 	addToOpenList(openList, neighbors);
@@ -692,6 +768,9 @@ void OpticalFlow::FindAvoidVector(FlowNode collisionNode)
 			ROS_INFO("Candidates: mag: %f, ang: %f, i:%i, j:%i", open_it->magnitude, open_it->angle, open_it->i, open_it->j);
 		#endif
 		// NaN means there is no flow so this is a good region
+		if(potentialCollision(*open_it)){
+			numNbrCollisions++;
+		}
 		if((isnan(open_it->angle)) || (isnan(open_it->magnitude))){
 			bestNode = *open_it;
 			break;
@@ -708,20 +787,29 @@ void OpticalFlow::FindAvoidVector(FlowNode collisionNode)
 		ROS_WARN("BEST NODE WAS THE CURRENT NODE!");
 		return;
 	}
+	// Other collisions nearby so it's most likely a real collision
+	// Set the collision flag and set the direction to move
+	if(numNbrCollisions >= COL_FLTR_THRES){
+		#ifdef D_FLTR_COL
+			ROS_INFO("Collision threshold exceeded, will avoid collision");
+		#endif
+		// Set the imminent collision flag
+		willCollide.data = true;
+		pubCollisionDetect.publish(willCollide);
+	}
 	float moveX;
 	float moveY;
 	float cellXPos = bestNode.i * cellWidth;
 	float cellYPos = bestNode.j * cellHeight;
-	moveX = ((vidWidth/2.0f)-cellXPos)/(vidWidth/2.0f);
-	moveY = ((vidHeight/2.0f)-cellYPos)/(vidHeight/2.0f);
+	moveX = -1.0f*((vidWidth/2.0f)-cellXPos)/(vidWidth/2.0f);
+	moveY = -1.0f*((vidHeight/2.0f)-cellYPos)/(vidHeight/2.0f);
 	#ifdef D_AVOIDVECTOR
 		ROS_INFO("movX: %f, movY: %f", moveX, moveY);
 	#endif
 	avoidanceDirection.x = moveX;
 	avoidanceDirection.y = moveY;
 	avoidanceDirection.z = 0.0f;
-	pubAvoidDirection.publish(avoidanceDirection);
-		
+	pubAvoidDirection.publish(avoidanceDirection);	
 }
 
 //! If the drone is moving then do collision avoidance
@@ -745,29 +833,59 @@ void OpticalFlow::CollisionAvoidance()
 		return;
 	}
 	#endif
+	if(stopAvoidanceTimer() == true){
+		return;
+	}
 	// TODO add some filtering using the flowNode buffer
-	bool noImminent = false;
+	//bool noImminent = false;
 	FlowNode pqElem;
-	while(!flowPQ.empty())
-	{
-		pqElem = flowPQ.top();
-		flowPQ.pop();
-		
-		// Check if collision is imminent
-		if(potentialCollision(pqElem)){
-			// Set the imminent collision flag
-			willCollide.data = true;
-			pubCollisionDetect.publish(willCollide);
-			// Generate the vector to publish
-			FindAvoidVector(pqElem);
-		}
-		else
+	if(!flowPQ.empty()){
+		while(!flowPQ.empty())
 		{
+			pqElem = flowPQ.top();
+			flowPQ.pop();
+			
+			// Check if collision is imminent
+			if(potentialCollision(pqElem)){
+				// Generate the vector to publish
+				FindAvoidVector(pqElem);
+				break;
+			}
+			else
+			{
+				//ROS_INFO("NO COL");
+				willCollide.data = false;
+				pubCollisionDetect.publish(willCollide);
+				break;
+			}
+		}
+	}else{
+		willCollide.data = false;
+		pubCollisionDetect.publish(willCollide);
+	}
+	//ROS_INFO("mag: %f, ang: %f, i:%i, j:%i", pqElem.magnitude, pqElem.angle, pqElem.i, pqElem.j);
+	//ROS_INFO("Will collide %s",(willCollide.data)?"true":"false");
+	return;
+}
+
+bool OpticalFlow::stopAvoidanceTimer(){
+	if(willCollide.data == true){
+		if(SpinCount > (SpinRate/2))
+		{	
+			//stop moving
+			avoidanceDirection.x = 0.0f;
+			avoidanceDirection.y = 0.0f;
+			avoidanceDirection.z = 0.0f;
+			pubAvoidDirection.publish(avoidanceDirection);
+			
+			ROS_INFO("STOP COLLISON AVOIDANCE");
+			// Turn off collision flag
 			willCollide.data = false;
 			pubCollisionDetect.publish(willCollide);
+			return true;
 		}
-		//ROS_INFO("mag: %f, ang: %f, i:%i, j:%i", pqElem.magnitude, pqElem.angle, pqElem.i, pqElem.j);
 	}
+	return false;	
 }
 
 //! Controls the rate in which optical the algo is ran
@@ -775,12 +893,22 @@ int main(int argc, char ** argv)
 {
 	ros::init(argc, argv, "contrast_enhancer");
 	InitImageMatrix(true);
+	willCollide.data = false;
 	OpticalFlow ofInit;
-	ros::Rate r(25); //30hz
+	SpinRate = 30;
+	SpinCount = 0;
+	ros::Rate r(SpinRate);
 	while(ros::ok()){
+		// Init global mag and angle
+		GblStart.x = std::numeric_limits<float>::quiet_NaN();
+		GblStart.y = std::numeric_limits<float>::quiet_NaN();
+		GblEnd.x = std::numeric_limits<float>::quiet_NaN();
+		GblEnd.y = std::numeric_limits<float>::quiet_NaN();
+		SpinCount++;
 		OpticalFlow of;
 		ros::spinOnce();
 		r.sleep();
+		//ROS_INFO("Will collide %s",(willCollide.data)?"true":"false");
 	}
 	return 0;
 }
