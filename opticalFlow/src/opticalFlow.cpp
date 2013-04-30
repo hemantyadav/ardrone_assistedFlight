@@ -24,6 +24,12 @@
 
 //#define USE_ISMOVING
 
+// Control image drawing macros
+//#define HIDE_NO_DANGER
+#define HIDE_COL_REGION
+#define SHOW_GRIDLINES
+#define SHOW_AVOID_DIR
+
 // Debug Defines
 //#define D_PQ_ORDER
 //#define D_COL_DETECT
@@ -91,6 +97,7 @@ int SpinRate;
 int SpinCount;
 
 cv::Point2f center;
+cv::Point2f avoidDir;
 ardrone_autonomy::Navdata navdata;
 
 // Published data
@@ -312,13 +319,34 @@ void BuildPQ(cv::Mat image)
 	while(!flowPQ.empty()){
 		flowPQ.pop();
 	}
+	#ifndef HIDE_COL_REGION
 	cv::Point2f topLeft;
 	cv::Point2f botRight;
 	topLeft.x = xMin; topLeft.y=yMin;
 	botRight.x = xMax; botRight.y = yMax;
 	cv::rectangle(image, topLeft, botRight, CV_RGB(0,255,0),5,8);
+	#endif
+	#ifdef SHOW_AVOID_DIR
+	cv::Scalar colVecColor = CV_RGB(0,255,0);
+	cv::line(image, center, avoidDir, colVecColor, 2); //green
+	cv::rectangle(image, avoidDir-cv::Point2f(3,3), avoidDir+cv::Point2f(2,2), colVecColor,   4);
+	#endif
 	for(int i = 0; i<GRIDSIZE; i++){
+		#ifdef SHOW_GRIDLINES
+			cv::Point2f hStart;
+			cv::Point2f hEnd;
+			cv::Point2f vStart;
+			cv::Point2f vEnd;
+			cv::Scalar gridColor = CV_RGB(0,255,0);
+			hStart.x = cellWidth*(i+1); hStart.y = 0;
+			hEnd.x = cellWidth*(i+1); hEnd.y = vidHeight;
+			vStart.x = 0; vStart.y = cellHeight*(i+1);
+			vEnd.x = vidWidth; vEnd.y = cellHeight*(i+1);
+			cv::line(image, hStart, hEnd, gridColor, 1);
+			cv::line(image, vStart, vEnd, gridColor, 1);
+		#endif
 		for(int j = 0; j<GRIDSIZE; j++){
+			bool dangerVector = true;
 			int curNodeIdx = imageGrid[i][j].curNodeIdx;
 			FlowNode pqElem = imageGrid[i][j].flowBuf[curNodeIdx];
 			// NaN presence mean there were no flow vectors, ignore
@@ -351,15 +379,20 @@ void BuildPQ(cv::Mat image)
 					flowPQ.push(imageGrid[i][j].flowBuf[curNodeIdx]);
 				}else{
 					// Not dangerous, blue line
+					dangerVector = false;
 					lineColor = cv::Scalar(255, 0 , 0);
 				}
-				
+				#ifdef HIDE_NO_DANGER
+				if(dangerVector){
+				#endif
 				// Now we draw the main line of the arrow.
 				cv::line(image, pqElem.start, pqElem.end, lineColor, line_thickness);
 				
 				// Draw a rectangle at the end of the vector for direction
 				cv::rectangle(image, pqElem.end-cv::Point2f(3,3), pqElem.end+cv::Point2f(2,2), lineColor,   4);
-				
+				#ifdef HIDE_NO_DANGER
+				}
+				#endif
 				
 			}
 		}
@@ -801,6 +834,8 @@ void OpticalFlow::FindAvoidVector(FlowNode collisionNode)
 	float moveY;
 	float cellXPos = bestNode.i * cellWidth;
 	float cellYPos = bestNode.j * cellHeight;
+	avoidDir.x = cellXPos;
+	avoidDir.y = cellYPos;
 	moveX = -1.0f*((vidWidth/2.0f)-cellXPos)/(vidWidth/2.0f);
 	moveY = -1.0f*((vidHeight/2.0f)-cellYPos)/(vidHeight/2.0f);
 	#ifdef D_AVOIDVECTOR
